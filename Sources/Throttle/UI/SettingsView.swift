@@ -8,6 +8,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Toggle("Launch at login", isOn: $store.launchAtLogin)
                 Toggle("Notify at 90% used", isOn: $store.notificationsEnabled)
+                Toggle("Show Fable 5 usage", isOn: $store.showFableUsage)
             }
             .toggleStyle(.switch)
             .tint(.green)

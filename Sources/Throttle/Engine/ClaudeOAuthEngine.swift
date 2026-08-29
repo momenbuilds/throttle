@@ -12,6 +12,11 @@ enum ClaudeOAuthEngine {
         let sessionResetsLabel: String
         let weeklyPercent: Double
         let weeklyResetsLabel: String
+        /// Weekly limit scoped to Claude Fable 5, from the `limits` array
+        /// (`kind == "weekly_scoped"`, `scope.model.display_name == "Fable"`).
+        /// nil when the account has no Fable-specific window.
+        let fableWeeklyPercent: Double?
+        let fableWeeklyResetsLabel: String?
         let planLabel: String?
     }
 
@@ -66,6 +71,7 @@ enum ClaudeOAuthEngine {
         guard let json = fetchUsageJSON(accessToken: creds.accessToken) else { return nil }
         guard let session = window(json, keys: ["five_hour"]) else { return nil }
         let weekly = window(json, keys: ["seven_day"])
+        let fable = scopedWeeklyLimit(json, modelDisplayName: "fable")
 
         let now = Date()
         return Snapshot(
@@ -73,6 +79,8 @@ enum ClaudeOAuthEngine {
             sessionResetsLabel: relativeLabel(until: session.resetsAt, now: now),
             weeklyPercent: weekly?.utilization ?? 0,
             weeklyResetsLabel: weekly.map { relativeLabel(until: $0.resetsAt, now: now) } ?? "unknown",
+            fableWeeklyPercent: fable?.utilization,
+            fableWeeklyResetsLabel: fable.map { relativeLabel(until: $0.resetsAt, now: now) },
             planLabel: planLabel(rateLimitTier: creds.rateLimitTier, subscriptionType: creds.subscriptionType)
         )
     }
@@ -84,6 +92,27 @@ enum ClaudeOAuthEngine {
             guard let utilization else { continue }
             let resetsAt = (obj["resets_at"] as? String).flatMap(parseDate)
             return (utilization / 100.0, resetsAt)
+        }
+        return nil
+    }
+
+    /// Newer responses carry a `limits` array alongside the legacy top-level
+    /// windows. Model-scoped weekly limits (e.g. Fable 5) only appear there:
+    /// `{"kind": "weekly_scoped", "percent": 75, "resets_at": ...,
+    ///   "scope": {"model": {"display_name": "Fable"}}}`.
+    private static func scopedWeeklyLimit(_ json: [String: Any], modelDisplayName: String) -> (utilization: Double, resetsAt: Date?)? {
+        guard let limits = json["limits"] as? [[String: Any]] else { return nil }
+        for limit in limits {
+            guard (limit["kind"] as? String) == "weekly_scoped",
+                  let scope = limit["scope"] as? [String: Any],
+                  let model = scope["model"] as? [String: Any]
+            else { continue }
+            let name = ((model["display_name"] as? String) ?? (model["id"] as? String) ?? "").lowercased()
+            guard name.contains(modelDisplayName.lowercased()) else { continue }
+            let percent = (limit["percent"] as? Double) ?? (limit["percent"] as? Int).map(Double.init)
+            guard let percent else { continue }
+            let resetsAt = (limit["resets_at"] as? String).flatMap(parseDate)
+            return (percent / 100.0, resetsAt)
         }
         return nil
     }
