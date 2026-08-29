@@ -20,11 +20,20 @@ final class UsageStore: ObservableObject {
     @Published var launchAtLogin: Bool {
         didSet { LaunchAtLogin.setEnabled(launchAtLogin) }
     }
+    /// Show the Fable 5-scoped weekly limit as an extra bar on the Claude tab
+    /// (and include it in threshold notifications).
+    @Published var showFableUsage: Bool {
+        didSet {
+            UserDefaults.standard.set(showFableUsage, forKey: Keys.showFableUsage)
+            refresh()
+        }
+    }
 
     private enum Keys {
         static let sessionBudget = "throttle.sessionBudget"
         static let weeklyBudget = "throttle.weeklyBudget"
         static let notificationsEnabled = "throttle.notificationsEnabled"
+        static let showFableUsage = "throttle.showFableUsage"
     }
 
     private var timer: Timer?
@@ -35,6 +44,7 @@ final class UsageStore: ObservableObject {
         self.sessionBudget = defaults.object(forKey: Keys.sessionBudget) as? Double ?? 40
         self.weeklyBudget = defaults.object(forKey: Keys.weeklyBudget) as? Double ?? 400
         self.notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? true
+        self.showFableUsage = defaults.object(forKey: Keys.showFableUsage) as? Bool ?? true
         self.launchAtLogin = LaunchAtLogin.isEnabled
         if notificationsEnabled { UsageNotifier.requestAuthorizationIfNeeded() }
         refresh()
@@ -46,12 +56,13 @@ final class UsageStore: ObservableObject {
     func refresh() {
         let sessionBudget = self.sessionBudget
         let weeklyBudget = self.weeklyBudget
+        let showFableUsage = self.showFableUsage
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            self?.computeAndPublish(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget)
+            self?.computeAndPublish(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget, showFableUsage: showFableUsage)
         }
     }
 
-    private func computeAndPublish(sessionBudget: Double, weeklyBudget: Double) {
+    private func computeAndPublish(sessionBudget: Double, weeklyBudget: Double, showFableUsage: Bool) {
         var result: [ToolUsage] = []
 
         if let oauth = ClaudeOAuthEngine.computeSnapshot() {
@@ -61,6 +72,8 @@ final class UsageStore: ObservableObject {
                 sessionResetsLabel: oauth.sessionResetsLabel,
                 weeklyPercent: oauth.weeklyPercent,
                 weeklyResetsLabel: oauth.weeklyResetsLabel,
+                fableWeeklyPercent: showFableUsage ? oauth.fableWeeklyPercent : nil,
+                fableWeeklyResetsLabel: showFableUsage ? oauth.fableWeeklyResetsLabel : nil,
                 available: true,
                 note: oauth.planLabel.map { "Plan: \($0) — live from Anthropic" } ?? "Live from Anthropic"
             ))

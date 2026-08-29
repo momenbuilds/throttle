@@ -54,7 +54,7 @@ swift build
 
 | | Session window | Weekly window | Plan | Source |
 |---|---|---|---|---|
-| **Claude** | ✅ live | ✅ live | ✅ (`Max 20x`, `Pro`, …) | Anthropic's account API |
+| **Claude** | ✅ live | ✅ live, plus a **Fable 5** weekly bar when your plan has one | ✅ (`Max 20x`, `Pro`, …) | Anthropic's account API |
 | **Codex** | ✅ live | ⚠️ when OpenAI exposes it for your plan | ✅ | OpenAI's API, via Codex CLI's local logs |
 | **Gemini** | — | — | — | see [why below](#gemini) |
 
@@ -63,6 +63,7 @@ Rings and bars are colored by how close you are to the limit — green under 50%
 ## Features
 
 - 🟢 **Live usage rings** for Claude and Codex, in a floating pill and a detail panel
+- 🧠 **Fable 5 weekly limit** — Anthropic meters Claude Fable 5 on its own weekly window; Throttle shows it as a separate bar on the Claude tab (toggle **Show Fable 5 usage** in Settings)
 - 🔔 **Threshold notifications** — get pinged once a window crosses 90%, not after
 - 🚀 **Launch at login**, toggled in-app (no manual Login Items fiddling)
 - 🧲 **Draggable pill**, position remembered between launches
@@ -71,7 +72,7 @@ Rings and bars are colored by how close you are to the limit — green under 50%
 
 ## How the numbers work
 
-- **Claude** — calls `api.anthropic.com/api/oauth/usage`, the same endpoint Claude Code's own `/usage` and `/status` commands use, authenticated with the OAuth token Claude Code already saved when you ran `claude login` (read from `~/.claude/.credentials.json`, or the macOS Keychain item `Claude Code-credentials` on newer installs). If you're signed out, it falls back to a cost-weighted estimate from local session logs (`~/.claude/projects/**/*.jsonl`), using real per-model $/token pricing compared against a budget you set in Settings — clearly labeled as an estimate, and it's allowed to show over 100% (in red) instead of silently capping.
+- **Claude** — calls `api.anthropic.com/api/oauth/usage`, the same endpoint Claude Code's own `/usage` and `/status` commands use, authenticated with the OAuth token Claude Code already saved when you ran `claude login` (read from `~/.claude/.credentials.json`, or the macOS Keychain item `Claude Code-credentials` on newer installs). The same response carries a `limits` array with model-scoped windows — the **Fable 5** bar is the `weekly_scoped` entry whose scope is the Fable model, shown only when your account actually has one. If you're signed out, it falls back to a cost-weighted estimate from local session logs (`~/.claude/projects/**/*.jsonl`), using real per-model $/token pricing compared against a budget you set in Settings — clearly labeled as an estimate, and it's allowed to show over 100% (in red) instead of silently capping.
 - **Codex** — reads the most recently modified `~/.codex/sessions/**/rollout-*.jsonl` and takes the real `rate_limits.primary.used_percent` (and `resets_at`) that OpenAI's API already returns into Codex CLI's own logs. No estimation.
 - <a name="gemini"></a>**Gemini** — Google shut down Gemini CLI's usage-quota API for individual Google accounts in June 2026 (Workspace/Enterprise accounts are unaffected). Since there's nothing honest to show for most people right now, this stays off rather than faking a number. If that changes, or if you're on a Workspace/Enterprise account and want it wired up, see `GeminiUsageEngine.swift`.
 
@@ -95,7 +96,7 @@ Sources/Throttle/
     GeminiUsageEngine.swift    stub — see "Gemini" above
   UI/
     ContentView.swift          detail panel: tab row + session/weekly bars
-    SettingsView.swift          login/notification toggles + budget calibration
+    SettingsView.swift          login/notification/Fable 5 toggles + budget calibration
     FloatingPillView.swift      compact ring strip for the pill
     RingView.swift              status-colored ring + StatusColor helper
     BrandMark.swift             loads the real provider marks

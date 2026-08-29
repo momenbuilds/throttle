@@ -16,6 +16,10 @@ struct ToolUsage: Identifiable {
     let weeklyPercent: Double?
     let weeklyResetsLabel: String?
     var weeklyCost: Double? = nil
+    /// Claude only: weekly limit scoped to Fable 5, when the account has one
+    /// and the "Show Fable 5 usage" setting is on. 0...1.
+    var fableWeeklyPercent: Double? = nil
+    var fableWeeklyResetsLabel: String? = nil
     let available: Bool
     let note: String?
 }
