@@ -22,7 +22,7 @@ enum UsageNotifier {
             guard item.available else { continue }
             check(tool: item.tool, window: "session", label: "Current session", percent: item.sessionPercent)
             check(tool: item.tool, window: "weekly", label: "Weekly", percent: item.weeklyPercent)
-            check(tool: item.tool, window: "fable-weekly", label: "Fable 5 weekly", percent: item.fableWeeklyPercent)
+            check(tool: item.tool, window: "fable-weekly", label: "\(item.fableWeeklyLabel ?? "Fable 5") weekly", percent: item.fableWeeklyPercent)
         }
     }
 

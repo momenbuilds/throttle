@@ -63,7 +63,7 @@ Rings and bars are colored by how close you are to the limit — green under 50%
 ## Features
 
 - 🟢 **Live usage rings** for Claude and Codex, in a floating pill and a detail panel
-- 🧠 **Fable 5 weekly limit** — Anthropic meters Claude Fable 5 on its own weekly window; Throttle shows it as a separate bar on the Claude tab (toggle **Show Fable 5 usage** in Settings)
+- 🧠 **Fable 5 weekly limit** — Anthropic meters Claude Fable 5 on its own weekly window; Throttle shows it as a separate bar on the Claude tab (toggle **Show Fable 5 usage** in Settings to hide the bar — the 90% notification still fires either way)
 - 🔔 **Threshold notifications** — get pinged once a window crosses 90%, not after
 - 🚀 **Launch at login**, toggled in-app (no manual Login Items fiddling)
 - 🧲 **Draggable pill**, position remembered between launches

@@ -20,13 +20,11 @@ final class UsageStore: ObservableObject {
     @Published var launchAtLogin: Bool {
         didSet { LaunchAtLogin.setEnabled(launchAtLogin) }
     }
-    /// Show the Fable 5-scoped weekly limit as an extra bar on the Claude tab
-    /// (and include it in threshold notifications).
+    /// Show the Fable 5-scoped weekly limit as an extra bar on the Claude tab.
+    /// Presentation only: the window is still fetched and still notifies at
+    /// 90%, so hiding the bar never hides the limit that's about to bite.
     @Published var showFableUsage: Bool {
-        didSet {
-            UserDefaults.standard.set(showFableUsage, forKey: Keys.showFableUsage)
-            refresh()
-        }
+        didSet { UserDefaults.standard.set(showFableUsage, forKey: Keys.showFableUsage) }
     }
 
     private enum Keys {
@@ -56,13 +54,12 @@ final class UsageStore: ObservableObject {
     func refresh() {
         let sessionBudget = self.sessionBudget
         let weeklyBudget = self.weeklyBudget
-        let showFableUsage = self.showFableUsage
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            self?.computeAndPublish(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget, showFableUsage: showFableUsage)
+            self?.computeAndPublish(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget)
         }
     }
 
-    private func computeAndPublish(sessionBudget: Double, weeklyBudget: Double, showFableUsage: Bool) {
+    private func computeAndPublish(sessionBudget: Double, weeklyBudget: Double) {
         var result: [ToolUsage] = []
 
         if let oauth = ClaudeOAuthEngine.computeSnapshot() {
@@ -72,8 +69,9 @@ final class UsageStore: ObservableObject {
                 sessionResetsLabel: oauth.sessionResetsLabel,
                 weeklyPercent: oauth.weeklyPercent,
                 weeklyResetsLabel: oauth.weeklyResetsLabel,
-                fableWeeklyPercent: showFableUsage ? oauth.fableWeeklyPercent : nil,
-                fableWeeklyResetsLabel: showFableUsage ? oauth.fableWeeklyResetsLabel : nil,
+                fableWeeklyPercent: oauth.fableWeeklyPercent,
+                fableWeeklyResetsLabel: oauth.fableWeeklyResetsLabel,
+                fableWeeklyLabel: oauth.fableWeeklyLabel,
                 available: true,
                 note: oauth.planLabel.map { "Plan: \($0) — live from Anthropic" } ?? "Live from Anthropic"
             ))

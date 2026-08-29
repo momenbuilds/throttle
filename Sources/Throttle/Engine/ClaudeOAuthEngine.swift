@@ -17,6 +17,9 @@ enum ClaudeOAuthEngine {
         /// nil when the account has no Fable-specific window.
         let fableWeeklyPercent: Double?
         let fableWeeklyResetsLabel: String?
+        /// The model name Anthropic reports for that window (e.g. "Fable"), so
+        /// the UI follows the API instead of hardcoding a version number.
+        let fableWeeklyLabel: String?
         let planLabel: String?
     }
 
@@ -81,6 +84,7 @@ enum ClaudeOAuthEngine {
             weeklyResetsLabel: weekly.map { relativeLabel(until: $0.resetsAt, now: now) } ?? "unknown",
             fableWeeklyPercent: fable?.utilization,
             fableWeeklyResetsLabel: fable.map { relativeLabel(until: $0.resetsAt, now: now) },
+            fableWeeklyLabel: fable?.label,
             planLabel: planLabel(rateLimitTier: creds.rateLimitTier, subscriptionType: creds.subscriptionType)
         )
     }
@@ -100,19 +104,22 @@ enum ClaudeOAuthEngine {
     /// windows. Model-scoped weekly limits (e.g. Fable 5) only appear there:
     /// `{"kind": "weekly_scoped", "percent": 75, "resets_at": ...,
     ///   "scope": {"model": {"display_name": "Fable"}}}`.
-    private static func scopedWeeklyLimit(_ json: [String: Any], modelDisplayName: String) -> (utilization: Double, resetsAt: Date?)? {
+    private static func scopedWeeklyLimit(_ json: [String: Any], modelDisplayName: String) -> (utilization: Double, resetsAt: Date?, label: String?)? {
         guard let limits = json["limits"] as? [[String: Any]] else { return nil }
         for limit in limits {
             guard (limit["kind"] as? String) == "weekly_scoped",
                   let scope = limit["scope"] as? [String: Any],
                   let model = scope["model"] as? [String: Any]
             else { continue }
-            let name = ((model["display_name"] as? String) ?? (model["id"] as? String) ?? "").lowercased()
-            guard name.contains(modelDisplayName.lowercased()) else { continue }
+            // Match on either field, but only ever label the bar with the
+            // human-readable one — an id like "claude-fable-5" is not a title.
+            let displayName = model["display_name"] as? String
+            let name = displayName ?? (model["id"] as? String) ?? ""
+            guard name.lowercased().contains(modelDisplayName.lowercased()) else { continue }
             let percent = (limit["percent"] as? Double) ?? (limit["percent"] as? Int).map(Double.init)
             guard let percent else { continue }
             let resetsAt = (limit["resets_at"] as? String).flatMap(parseDate)
-            return (percent / 100.0, resetsAt)
+            return (percent / 100.0, resetsAt, displayName)
         }
         return nil
     }

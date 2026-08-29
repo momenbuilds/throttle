@@ -122,8 +122,8 @@ struct ContentView: View {
             if let item = currentItem, item.available {
                 BarRow(title: "Current session", percent: item.sessionPercent, resetsLabel: item.sessionResetsLabel)
                 BarRow(title: item.tool == .codex ? "Weekly limit" : "All models", percent: item.weeklyPercent, resetsLabel: item.weeklyResetsLabel)
-                if let fable = item.fableWeeklyPercent {
-                    BarRow(title: "Fable 5", percent: fable, resetsLabel: item.fableWeeklyResetsLabel)
+                if store.showFableUsage, let fable = item.fableWeeklyPercent {
+                    BarRow(title: item.fableWeeklyLabel ?? "Fable 5", percent: fable, resetsLabel: item.fableWeeklyResetsLabel)
                 }
                 if let note = item.note {
                     Text(note)
