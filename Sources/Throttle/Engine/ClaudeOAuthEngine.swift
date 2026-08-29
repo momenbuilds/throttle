@@ -61,9 +61,20 @@ enum ClaudeOAuthEngine {
         )
     }
 
+    /// Snapshot for the primary account, using the credentials Claude Code
+    /// itself stored (Keychain or ~/.claude/.credentials.json).
     static func computeSnapshot() -> Snapshot? {
         guard let creds = loadCredentials() else { return nil }
-        guard let json = fetchUsageJSON(accessToken: creds.accessToken) else { return nil }
+        return computeSnapshot(
+            accessToken: creds.accessToken,
+            planLabel: planLabel(rateLimitTier: creds.rateLimitTier, subscriptionType: creds.subscriptionType)
+        )
+    }
+
+    /// Snapshot for any account given a bare OAuth bearer token. Raw tokens
+    /// carry no plan metadata, so the caller supplies the plan label (or nil).
+    static func computeSnapshot(accessToken: String, planLabel: String?) -> Snapshot? {
+        guard let json = fetchUsageJSON(accessToken: accessToken) else { return nil }
         guard let session = window(json, keys: ["five_hour"]) else { return nil }
         let weekly = window(json, keys: ["seven_day"])
 
@@ -73,7 +84,7 @@ enum ClaudeOAuthEngine {
             sessionResetsLabel: relativeLabel(until: session.resetsAt, now: now),
             weeklyPercent: weekly?.utilization ?? 0,
             weeklyResetsLabel: weekly.map { relativeLabel(until: $0.resetsAt, now: now) } ?? "unknown",
-            planLabel: planLabel(rateLimitTier: creds.rateLimitTier, subscriptionType: creds.subscriptionType)
+            planLabel: planLabel
         )
     }
 
