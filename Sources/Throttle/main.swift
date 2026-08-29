@@ -51,18 +51,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let pillVisibleKey = "throttle.pillVisible"
 
+    // One session percent per signed-in Claude account, in account order
+    // (main · B · C), each tinted by its own status color. Accounts without
+    // a token just don't contribute a segment.
     private func updateStatusTitle() {
         guard let button = statusItem.button else { return }
-        if let claude = store.items.first(where: { $0.tool == .claude }), claude.available, let percent = claude.sessionPercent {
+        let font = NSFont.menuBarFont(ofSize: 0)
+        let claudeItems = store.items.filter { $0.tool.isClaudeAccount && $0.available && $0.sessionPercent != nil }
+        guard !claudeItems.isEmpty else {
+            button.attributedTitle = NSAttributedString(string: "")
+            return
+        }
+
+        let title = NSMutableAttributedString(string: " ")
+        for (index, item) in claudeItems.enumerated() {
+            guard let percent = item.sessionPercent else { continue }
+            if index > 0 {
+                title.append(NSAttributedString(
+                    string: "·",
+                    attributes: [.foregroundColor: NSColor.tertiaryLabelColor, .font: font]
+                ))
+            }
             let clamped = min(999, Int(percent * 100))
             let color = percent > 1.0 ? NSColor.red : NSColor(StatusColor.forPercent(percent))
-            button.attributedTitle = NSAttributedString(
-                string: " \(clamped)%",
-                attributes: [.foregroundColor: color, .font: NSFont.menuBarFont(ofSize: 0)]
-            )
-        } else {
-            button.attributedTitle = NSAttributedString(string: "")
+            title.append(NSAttributedString(
+                string: "\(clamped)%",
+                attributes: [.foregroundColor: color, .font: font]
+            ))
         }
+        button.attributedTitle = title
     }
 
     @objc private func statusItemClicked() {

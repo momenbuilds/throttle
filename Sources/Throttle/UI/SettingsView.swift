@@ -20,7 +20,7 @@ struct SettingsView: View {
                 Text("Calibrate Claude budget")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
-                Text("Claude usage shows live numbers from your Anthropic account whenever you're signed in via `claude login`. This budget only matters as a fallback if that sign-in isn't available — it estimates a dollar cost from local token counts instead.")
+                Text("Claude usage shows live numbers from your Anthropic account whenever you're signed in via `claude login`. This budget only matters as a fallback for the main Claude account if that sign-in isn't available — it estimates a dollar cost from local token counts instead. Extra Claude accounts read their tokens from ~/.config/dabo/secrets.env and have no fallback.")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.white.opacity(0.55))
                     .fixedSize(horizontal: false, vertical: true)

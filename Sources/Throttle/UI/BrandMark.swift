@@ -36,7 +36,7 @@ struct BrandMark: View {
         if let cached = cache[tool] { return cached }
         let name: String
         switch tool {
-        case .claude: name = "claude"
+        case .claude, .claudeB, .claudeC: name = "claude"
         case .codex: name = "openai"
         case .gemini: name = "gemini"
         }

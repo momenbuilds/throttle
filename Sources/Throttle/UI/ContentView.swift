@@ -86,34 +86,20 @@ struct ContentView: View {
         store.items.first { $0.tool == selection.selected }
     }
 
+    // Five tools don't fit one 340pt-wide row of capsule tabs, so they wrap
+    // into two fixed rows: the Claude accounts, then everything else.
+    private static let tabRows: [[ToolUsage.Tool]] = [
+        ToolUsage.Tool.allCases.filter { $0.isClaudeAccount },
+        ToolUsage.Tool.allCases.filter { !$0.isClaudeAccount },
+    ]
+
     private var detailCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) {
-                ForEach(ToolUsage.Tool.allCases, id: \.self) { tool in
-                    let item = store.items.first { $0.tool == tool }
-                    Button {
-                        selection.selected = tool
-                    } label: {
-                        HStack(spacing: 6) {
-                            BrandMark(tool: tool, size: 20)
-                            Text(tool.rawValue)
-                                .font(.system(size: 12, weight: .semibold))
-                                .fixedSize()
-                        }
-                        .foregroundStyle(selection.selected == tool ? .white : .white.opacity(0.4))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule().fill(selection.selected == tool ? Color.white.opacity(0.12) : Color.clear)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .overlay(alignment: .topTrailing) {
-                        if let p = item?.sessionPercent, item?.available == true {
-                            Circle()
-                                .fill(p > 1.0 ? .red : StatusColor.forPercent(p))
-                                .frame(width: 6, height: 6)
-                                .offset(x: -2, y: 2)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Self.tabRows, id: \.self) { row in
+                    HStack(spacing: 6) {
+                        ForEach(row, id: \.self) { tool in
+                            tabButton(for: tool)
                         }
                     }
                 }
@@ -137,6 +123,35 @@ struct ContentView: View {
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 16).fill(Color.black.opacity(0.5)))
         .overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.07)))
+    }
+
+    private func tabButton(for tool: ToolUsage.Tool) -> some View {
+        let item = store.items.first { $0.tool == tool }
+        return Button {
+            selection.selected = tool
+        } label: {
+            HStack(spacing: 6) {
+                BrandMark(tool: tool, size: 20)
+                Text(tool.rawValue)
+                    .font(.system(size: 12, weight: .semibold))
+                    .fixedSize()
+            }
+            .foregroundStyle(selection.selected == tool ? .white : .white.opacity(0.4))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(
+                Capsule().fill(selection.selected == tool ? Color.white.opacity(0.12) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .topTrailing) {
+            if let p = item?.sessionPercent, item?.available == true {
+                Circle()
+                    .fill(p > 1.0 ? .red : StatusColor.forPercent(p))
+                    .frame(width: 6, height: 6)
+                    .offset(x: -2, y: 2)
+            }
+        }
     }
 }
 
@@ -165,6 +180,13 @@ struct RingStripView: View {
                             Text("—")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.white.opacity(0.35))
+                        }
+                        // Three Claude rings share one brand mark — a tiny
+                        // caption tells them apart at a glance.
+                        if let badge = tool.accountBadge {
+                            Text(badge)
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.4))
                         }
                     }
                 }
