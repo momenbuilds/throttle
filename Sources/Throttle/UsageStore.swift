@@ -16,6 +16,14 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    /// Tools the user turned off in Settings, even though they're installed.
+    @Published private(set) var hiddenTools: Set<ToolUsage.Tool> = [] {
+        didSet {
+            UserDefaults.standard.set(hiddenTools.map(\.rawValue).sorted(), forKey: Keys.hiddenTools)
+            recomputeVisibleTools()
+        }
+    }
+
     @Published var sessionBudget: Double {
         didSet { UserDefaults.standard.set(sessionBudget, forKey: Keys.sessionBudget) }
     }
@@ -53,6 +61,7 @@ final class UsageStore: ObservableObject {
         static let notificationsEnabled = "throttle.notificationsEnabled"
         static let showFableUsage = "throttle.showFableUsage"
         static let activatedTools = "throttle.activatedTools"
+        static let hiddenTools = "throttle.hiddenTools"
         static let pillEdge = "throttle.pillEdge"
         static let pillPeek = "throttle.pillPeek"
     }
@@ -69,6 +78,7 @@ final class UsageStore: ObservableObject {
         self.pillEdge = (defaults.string(forKey: Keys.pillEdge)).flatMap(PillEdge.init(rawValue:)) ?? .right
         self.pillPeek = defaults.object(forKey: Keys.pillPeek) as? Bool ?? false
         self.activatedTools = Set((defaults.stringArray(forKey: Keys.activatedTools) ?? []).compactMap(ToolUsage.Tool.init(rawValue:)))
+        self.hiddenTools = Set((defaults.stringArray(forKey: Keys.hiddenTools) ?? []).compactMap(ToolUsage.Tool.init(rawValue:)))
         self.launchAtLogin = LaunchAtLogin.isEnabled
         recomputeVisibleTools()
         if notificationsEnabled { UsageNotifier.requestAuthorizationIfNeeded() }
@@ -78,10 +88,14 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    func setToolActivated(_ tool: ToolUsage.Tool, _ activated: Bool) {
-        if activated {
-            activatedTools.insert(tool)
+    /// The Settings toggle: on = show the tool (and remember it if nothing
+    /// local detects it), off = keep it out of the pill, panel, and checks.
+    func setToolVisible(_ tool: ToolUsage.Tool, _ visible: Bool) {
+        if visible {
+            hiddenTools.remove(tool)
+            if !ToolPresence.isPresent(tool) { activatedTools.insert(tool) }
         } else {
+            hiddenTools.insert(tool)
             activatedTools.remove(tool)
         }
     }
@@ -89,7 +103,9 @@ final class UsageStore: ObservableObject {
     private func recomputeVisibleTools() {
         // Re-run on every toggle: presence is cheap (file stats) and installs
         // can happen while the app runs.
-        visibleTools = ToolUsage.Tool.allCases.filter { activatedTools.contains($0) || ToolPresence.isPresent($0) }
+        visibleTools = ToolUsage.Tool.allCases.filter {
+            !hiddenTools.contains($0) && (activatedTools.contains($0) || ToolPresence.isPresent($0))
+        }
     }
 
     func refresh() {

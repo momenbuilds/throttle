@@ -29,8 +29,8 @@ struct SettingsView: View {
                 ForEach(ToolUsage.Tool.allCases, id: \.self) { tool in
                     let detected = ToolPresence.isPresent(tool)
                     Toggle(isOn: Binding(
-                        get: { detected || store.activatedTools.contains(tool) },
-                        set: { store.setToolActivated(tool, $0) }
+                        get: { !store.hiddenTools.contains(tool) && (detected || store.activatedTools.contains(tool)) },
+                        set: { store.setToolVisible(tool, $0) }
                     )) {
                         HStack(spacing: 6) {
                             BrandMark(tool: tool, size: 14, color: .white.opacity(0.85))
@@ -42,8 +42,6 @@ struct SettingsView: View {
                             }
                         }
                     }
-                    .disabled(detected)
-                    .help(detected ? "Installed on this Mac — always shown" : "Not detected locally")
                 }
             }
             .toggleStyle(.switch)
@@ -65,7 +63,8 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 Toggle("Low profile — peek until hover", isOn: $store.pillPeek)
-                Text("Under notch parks the pill horizontally just below the menu bar. Low profile keeps a sliver visible and slides the pill out when the pointer reaches it.")
+                    .disabled(store.pillEdge == .notchLeft)
+                Text("Under notch parks the pill below the menu bar; Beside notch puts a slim always-visible strip in the menu bar's free space next to the notch. Low profile keeps a sliver visible and slides the pill out on hover (side edges and under notch).")
                     .font(.system(size: 10.5))
                     .foregroundStyle(.white.opacity(0.55))
                     .fixedSize(horizontal: false, vertical: true)

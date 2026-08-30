@@ -3,17 +3,22 @@ import SwiftUI
 import Combine
 
 /// Which screen edge the floating pill parks on. `.top` parks it as a
-/// horizontal strip just under the menu bar, centered on the notch.
+/// horizontal strip centered under the notch; `.notchLeft` parks it in the
+/// menu bar's free space to the left of the notch, with a gap off its flank.
 enum PillEdge: String, CaseIterable, Identifiable {
-    case right, left, top
+    case right, left, top, notchLeft = "notchLeft"
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .right: return "Right edge"
-        case .left: return "Left edge"
-        case .top: return "Under notch"
+        case .right: return "Right"
+        case .left: return "Left"
+        case .top: return "Under"
+        case .notchLeft: return "Beside"
         }
     }
+    /// Top placements anchor under the menu bar and slide on hover even when
+    /// the peek profile itself is off.
+    var isTopEdge: Bool { self == .top || self == .notchLeft }
 }
 
 /// Borderless always-on-top panel showing the same ring strip as the detail
@@ -24,8 +29,10 @@ enum PillEdge: String, CaseIterable, Identifiable {
 ///   profile it is fully shown and draggable (position persists). In peek
 ///   profile only a sliver stays on screen and the whole pill slides out on
 ///   hover, tucking back a moment after the pointer leaves.
-/// - Top edge: horizontal strip under the menu bar by the notch — the space
-///   most apps never use. Anchored, no dragging.
+/// - Under notch (.top): horizontal pill below the menu bar, peeking as a
+///   sliver and sliding down on hover. Anchored, no dragging.
+/// - Beside notch (.notchLeft): a menu-bar-height inline strip in the dead
+///   space left of the notch — glyph + percent pairs, always visible.
 /// The pill's panel. Overrides constrainFrameRect because peek profile
 /// deliberately parks the pill partly off-screen or behind the menu bar —
 /// AppKit's default constraint would push it fully visible, defeating the tuck.
@@ -38,6 +45,13 @@ final class EdgePanel: NSPanel {
 final class FloatingPillWindow: NSResponder {
     private let panel: NSPanel
     private var hosting: NSHostingController<FloatingPillView>!
+    private lazy var inlineHosting: NSHostingController<InlineStripView> = {
+        let controller = NSHostingController(rootView: InlineStripView(store: store, selected: Binding(get: { [weak selection] in selection?.selected ?? .claude }, set: { [weak selection] in selection?.selected = $0 })))
+        controller.sizingOptions = [.preferredContentSize]
+        controller.view.wantsLayer = true
+        controller.view.layer?.backgroundColor = .clear
+        return controller
+    }()
     private let store: UsageStore
     private let selection: SelectionModel
     private var didSizeAndPosition = false
@@ -50,6 +64,10 @@ final class FloatingPillWindow: NSResponder {
     /// How much of the pill stays visible in peek profile.
     private static let peekSliver: CGFloat = 16
     private static let gap: CGFloat = 6
+    /// Breathing room between the pill and the notch itself.
+    private static let notchGap: CGFloat = 14
+    /// Menu bar band height (also the inline strip's window height).
+    private static let menuBarHeight: CGFloat = 32
 
     init(store: UsageStore, selection: SelectionModel) {
         self.store = store
@@ -85,7 +103,15 @@ final class FloatingPillWindow: NSResponder {
 
     private var edge: PillEdge { store.pillEdge }
     private var isPeek: Bool { store.pillPeek }
-    private var isDraggable: Bool { !isPeek && edge != .top }
+    private var isDraggable: Bool { !isPeek && !edge.isTopEdge }
+
+    /// The under-notch peek pill tucks behind the menu bar, and the menu bar
+    /// only covers windows below its own level — so that mode sits at
+    /// .floating. The beside-notch strip deliberately draws over the menu
+    /// bar's dead space, so it (like the side pills) sits at .statusBar.
+    private func applyLevel() {
+        panel.level = edge == .top ? .floating : .statusBar
+    }
 
     private func installContent() {
         let binding = Binding<ToolUsage.Tool>(
@@ -98,21 +124,27 @@ final class FloatingPillWindow: NSResponder {
             }
         )
 
-        let content = FloatingPillView(store: store, selected: binding, horizontal: edge == .top, onSelectRing: {})
-        if hosting == nil {
-            hosting = NSHostingController(rootView: content)
-            hosting.sizingOptions = [.preferredContentSize]
-            // NSHostingView paints its own opaque background layer independent of
-            // whatever SwiftUI draws — clipShape only affects SwiftUI's content, not
-            // this layer, so without this the window bounds show through as a
-            // square behind the rounded card.
-            hosting.view.wantsLayer = true
-            hosting.view.layer?.backgroundColor = .clear
-            panel.contentViewController = hosting
+        // NSHostingView paints its own opaque background layer independent of
+        // whatever SwiftUI draws — clipShape only affects SwiftUI's content, not
+        // this layer, so without this the window bounds show through as a
+        // square behind the rounded card.
+        if edge == .notchLeft {
+            inlineHosting.rootView = InlineStripView(store: store, selected: binding)
+            panel.contentViewController = inlineHosting
         } else {
-            hosting.rootView = content
+            let content = FloatingPillView(store: store, selected: binding, horizontal: edge == .top, onSelectRing: {})
+            if hosting == nil {
+                hosting = NSHostingController(rootView: content)
+                hosting.sizingOptions = [.preferredContentSize]
+                hosting.view.wantsLayer = true
+                hosting.view.layer?.backgroundColor = .clear
+            } else {
+                hosting.rootView = content
+            }
+            panel.contentViewController = hosting
         }
         panel.isMovableByWindowBackground = isDraggable
+        applyLevel()
     }
 
     private func observeSettings() {
@@ -136,7 +168,7 @@ final class FloatingPillWindow: NSResponder {
         guard panel.isVisible else { installContent(); didSizeAndPosition = false; return }
         installContent()
         didSizeAndPosition = false
-        var size = hosting.view.fittingSize
+        var size = panel.contentView?.fittingSize ?? NSSize.zero
         if size.width < 1 || size.height < 1 { size = NSSize(width: 60, height: 200) }
         panel.setContentSize(size)
         slide(to: restOrigin(for: size, in: screenFrame), animated: true)
@@ -149,7 +181,9 @@ final class FloatingPillWindow: NSResponder {
     /// reading fittingSize too early silently produces a zero-size, invisible window.
     private func sizeAndPositionIfNeeded() {
         guard !didSizeAndPosition else { return }
-        var size = hosting.view.fittingSize
+        // The active controller differs by mode (pill vs inline strip), so
+        // measure whatever view is actually installed.
+        var size = panel.contentView?.fittingSize ?? NSSize.zero
         if size.width < 1 || size.height < 1 {
             size = NSSize(width: 60, height: 200)
         }
@@ -164,10 +198,21 @@ final class FloatingPillWindow: NSResponder {
         NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     }
 
+    private var screenTop: CGFloat {
+        NSScreen.main?.frame.maxY ?? 900
+    }
+
     /// Where the pill sits when the pointer isn't on it: tucked to its peek
     /// sliver, or fully placed (saved drag position for the draggable side
     /// profile, anchored otherwise).
     private func restOrigin(for size: NSSize, in frame: NSRect) -> NSPoint {
+        if edge == .notchLeft {
+            // The inline strip lives inside the menu bar band itself: its
+            // right edge stops `notchGap` short of the notch, vertically
+            // centered in the bar. There is no tucked state.
+            // Center whatever height the strip reports inside the 32pt band.
+            return NSPoint(x: notchLeftX(for: size, in: frame), y: screenTop - (Self.menuBarHeight + size.height) / 2)
+        }
         if isPeek || edge == .top {
             switch edge {
             case .right:
@@ -176,6 +221,8 @@ final class FloatingPillWindow: NSResponder {
                 return NSPoint(x: frame.minX - size.width + Self.peekSliver, y: frame.midY - size.height / 2)
             case .top:
                 return NSPoint(x: frame.midX - size.width / 2, y: frame.maxY - Self.peekSliver)
+            case .notchLeft:
+                return NSPoint(x: notchLeftX(for: size, in: frame), y: frame.maxY - Self.peekSliver)
             }
         }
         if let saved = UserDefaults.standard.string(forKey: Self.originKey) {
@@ -190,6 +237,7 @@ final class FloatingPillWindow: NSResponder {
         case .right: return NSPoint(x: frame.maxX - size.width - Self.gap, y: frame.midY - size.height / 2)
         case .left: return NSPoint(x: frame.minX + Self.gap, y: frame.midY - size.height / 2)
         case .top: return NSPoint(x: frame.midX - size.width / 2, y: frame.maxY - size.height - Self.gap)
+        case .notchLeft: return NSPoint(x: notchLeftX(for: size, in: frame), y: frame.maxY - size.height - Self.gap)
         }
     }
 
@@ -199,7 +247,19 @@ final class FloatingPillWindow: NSResponder {
         case .right: return NSPoint(x: frame.maxX - size.width - Self.gap, y: frame.midY - size.height / 2)
         case .left: return NSPoint(x: frame.minX + Self.gap, y: frame.midY - size.height / 2)
         case .top: return NSPoint(x: frame.midX - size.width / 2, y: frame.maxY - size.height - Self.gap)
+        case .notchLeft: return NSPoint(x: notchLeftX(for: size, in: frame), y: frame.maxY - size.height - Self.gap)
         }
+    }
+
+    /// The pill's left x when parked left of the notch: its right edge stops
+    /// `notchGap` short of the notch's flank (auxiliaryTopLeftArea is the
+    /// menu-bar region flanking the notch). Screens without a notch fall
+    /// back to the top-right corner.
+    private func notchLeftX(for size: NSSize, in frame: NSRect) -> CGFloat {
+        if let flank = NSScreen.main?.auxiliaryTopLeftArea {
+            return flank.maxX - size.width - Self.notchGap
+        }
+        return frame.maxX - size.width - Self.gap
     }
 
     private func slide(to origin: NSPoint, animated: Bool) {
@@ -215,25 +275,26 @@ final class FloatingPillWindow: NSResponder {
     // MARK: hover (peek profile)
 
     private func installTracking() {
-        if let trackingArea { hosting.view.removeTrackingArea(trackingArea) }
+        guard let contentView = panel.contentView else { return }
+        if let trackingArea { contentView.removeTrackingArea(trackingArea) }
         let area = NSTrackingArea(
-            rect: hosting.view.bounds,
+            rect: contentView.bounds,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
-        hosting.view.addTrackingArea(area)
+        contentView.addTrackingArea(area)
         trackingArea = area
     }
 
     override func mouseEntered(with event: NSEvent) {
         collapseWork?.cancel()
-        guard isPeek || edge == .top, panel.isVisible else { return }
+        guard edge == .top || (isPeek && !edge.isTopEdge), panel.isVisible else { return }
         slide(to: expandedOrigin(for: panel.frame.size, in: screenFrame), animated: true)
     }
 
     override func mouseExited(with event: NSEvent) {
-        guard isPeek || edge == .top, panel.isVisible else { return }
+        guard edge == .top || (isPeek && !edge.isTopEdge), panel.isVisible else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.slide(to: self.restOrigin(for: self.panel.frame.size, in: self.screenFrame), animated: true)

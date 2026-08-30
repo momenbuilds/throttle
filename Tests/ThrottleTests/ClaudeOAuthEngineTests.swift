@@ -17,6 +17,7 @@ final class ClaudeOAuthEngineTests: XCTestCase {
         XCTAssertEqual(creds?.accessToken, "tok-1")
         XCTAssertEqual(creds?.rateLimitTier, "default_claude_max_20x")
         XCTAssertEqual(creds?.subscriptionType, "claude_code_max")
+        XCTAssertEqual(creds?.expiresAt, 1_787_639_935_491)
     }
 
     func testRejectsForeignOrTokenlessPayloads() {

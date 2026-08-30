@@ -39,6 +39,8 @@ enum ClaudeOAuthEngine {
         let accessToken: String
         let rateLimitTier: String?
         let subscriptionType: String?
+        /// Access-token expiry in ms since epoch, when the payload says.
+        let expiresAt: Double?
     }
 
     /// Keeps the last successful snapshot for a while so the usage endpoint's
@@ -86,9 +88,16 @@ enum ClaudeOAuthEngine {
         return nil
     }
 
+    /// Claude Code can leave several credential payloads around at once — the
+    /// plaintext file plus a keychain item per account (multiple items share
+    /// the "Claude Code-credentials" service name), and any of them can be a
+    /// stale leftover from a previous login. Whichever token expires latest
+    /// is the one the running CLI is actually using.
     private static func loadCredentials() -> Credentials? {
-        if let fromFile = loadCredentialsFromFile() { return fromFile }
-        return loadCredentialsFromKeychain()
+        var candidates: [Credentials] = []
+        if let fromFile = loadCredentialsFromFile() { candidates.append(fromFile) }
+        candidates.append(contentsOf: loadAllKeychainCredentials())
+        return candidates.max { $0.expiresAt ?? 0 < $1.expiresAt ?? 0 }
     }
 
     private static func loadCredentialsFromFile() -> Credentials? {
@@ -98,19 +107,23 @@ enum ClaudeOAuthEngine {
         return parseCredentials(data)
     }
 
-    // Newer Claude Code versions store the OAuth payload in the macOS Keychain
-    // under service "Claude Code-credentials" instead of the plaintext file.
-    private static func loadCredentialsFromKeychain() -> Credentials? {
+    // Claude Code stores the OAuth payload in the macOS Keychain under
+    // service "Claude Code-credentials" — one item per account, so ask for
+    // all of them and let expiry decide below.
+    private static func loadAllKeychainCredentials() -> [Credentials] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "Claude Code-credentials",
             kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
         ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return parseCredentials(data)
+        var items: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &items)
+        guard status == errSecSuccess, let array = items as? [[String: Any]] else { return [] }
+        return array.compactMap { item in
+            (item[kSecValueData as String] as? Data).flatMap(parseCredentials)
+        }
     }
 
     /// Internal (not private) so tests can pin the stored-credential shape —
@@ -124,7 +137,8 @@ enum ClaudeOAuthEngine {
         return Credentials(
             accessToken: token,
             rateLimitTier: oauth["rateLimitTier"] as? String,
-            subscriptionType: oauth["subscriptionType"] as? String
+            subscriptionType: oauth["subscriptionType"] as? String,
+            expiresAt: oauth["expiresAt"] as? Double ?? (oauth["expiresAt"] as? Int).map(Double.init)
         )
     }
 
