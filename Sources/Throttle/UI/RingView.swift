@@ -1,12 +1,15 @@
 import SwiftUI
 
 enum StatusColor {
-    /// Matches the reference design: green under 50%, amber under 80%, red/orange above.
+    /// One urgency meaning everywhere usage is visualized: ordinary below
+    /// half, increasingly cautionary through 90%, then red at the same point
+    /// where Throttle's usage notification fires.
     static func forPercent(_ p: Double) -> Color {
         switch p {
         case ..<0.5: return Color(red: 0.30, green: 0.85, blue: 0.45)
-        case ..<0.8: return Color(red: 0.98, green: 0.80, blue: 0.20)
-        default: return Color(red: 0.98, green: 0.35, blue: 0.20)
+        case ..<0.75: return Color(red: 0.98, green: 0.80, blue: 0.20)
+        case ..<0.9: return Color(red: 0.98, green: 0.48, blue: 0.16)
+        default: return Color(red: 0.95, green: 0.20, blue: 0.24)
         }
     }
 }

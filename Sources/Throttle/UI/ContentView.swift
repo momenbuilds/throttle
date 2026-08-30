@@ -173,9 +173,9 @@ struct RingStripView: View {
                 selected = tool
             } label: {
                 VStack(spacing: 4) {
-                    RingView(percent: item?.sessionPercent, tool: tool, size: ringSize)
+                    RingView(percent: item?.headlinePercent, tool: tool, size: ringSize)
                         .opacity(highlighted == tool ? 1 : 0.6)
-                    if item?.available == true, let p = item?.sessionPercent {
+                    if item?.available == true, let p = item?.headlinePercent {
                         Text(compactPercent(p))
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(p > 1.0 ? .red : .white.opacity(0.85))
@@ -195,4 +195,3 @@ struct RingStripView: View {
         return "\(Int(p * 100))%"
     }
 }
-

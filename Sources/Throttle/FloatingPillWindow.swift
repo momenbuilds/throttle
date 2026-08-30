@@ -137,7 +137,14 @@ final class FloatingPillWindow: NSResponder {
             inlineHosting.rootView = InlineStripView(store: store, selected: binding)
             panel.contentViewController = inlineHosting
         } else {
-            let content = FloatingPillView(store: store, selected: binding, horizontal: edge == .top, onSelectRing: {})
+            let usageRailEdge: PillEdge? = edge == .top || isPeek ? edge : nil
+            let content = FloatingPillView(
+                store: store,
+                selected: binding,
+                horizontal: edge == .top,
+                usageRailEdge: usageRailEdge,
+                onSelectRing: {}
+            )
             if hosting == nil {
                 hosting = NSHostingController(rootView: content)
                 hosting.sizingOptions = [.preferredContentSize]
