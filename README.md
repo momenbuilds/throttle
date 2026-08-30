@@ -32,7 +32,7 @@ One command, works on Apple Silicon and Intel — from this folder:
 
 That builds a universal binary, drops `Throttle.app` into `/Applications`, and launches it. No Xcode project to open, no signing certificate to buy — just the free Xcode Command Line Tools (`xcode-select --install` if you don't have them).
 
-Look for the gauge icon in your menu bar and the pill on the right edge of your screen. Open either one, tap the gear, and flip on **Launch at login** so it's just always there from now on.
+Look for the gauge icon in your menu bar and the pill on the right edge of your screen (move it, or make it peek-only, in Settings). Open either one, tap the gear, and flip on **Launch at login** so it's just always there from now on.
 
 <details>
 <summary>Prefer to build it yourself?</summary>
@@ -67,7 +67,8 @@ Rings and bars are colored by how close you are to the limit — green under 50%
 - 🧠 **Fable 5 weekly limit** — Anthropic meters Claude Fable 5 on its own weekly window; Throttle shows it as a separate bar on the Claude tab (toggle **Show Fable 5 usage** in Settings to hide the bar — the 90% notification still fires either way)
 - 🔔 **Threshold notifications** — get pinged once a window crosses 90%, not after
 - 🚀 **Launch at login**, toggled in-app (no manual Login Items fiddling)
-- 🧲 **Draggable pill**, position remembered between launches
+- 🧲 **Configurable pill** — right edge (draggable, position remembered), left edge, or parked under the notch; optional low-profile mode keeps just a sliver visible until you hover
+- 🧭 **Show what you use** — tools appear automatically while they're installed on this Mac; anything else (like Gemini today) stays off until you turn it on in Settings
 - 🖥️ **Universal binary** — one build, runs native on Apple Silicon and Intel
 - 🔒 **Local-first** — talks only to Anthropic's and OpenAI's own APIs with credentials already on your machine; nothing else sees your data
 
@@ -89,7 +90,8 @@ Sources/Throttle/
   UsageNotifier.swift         90%-threshold local notifications
   SelectionModel.swift        shared "which tool is selected" state (pill ↔ panel)
   DetailPanelWindow.swift     custom NSPanel (not NSPopover — see source comments for why)
-  FloatingPillWindow.swift    draggable always-on-top NSPanel on the screen edge
+  FloatingPillWindow.swift    always-on-top NSPanel: right/left/top edges, optional peek-until-hover
+  ToolPresence.swift           which CLIs are installed — drives show-what-you-use
   UsageStore.swift            polls the engines every 60s, publishes to both UIs
   Engine/
     ClaudeOAuthEngine.swift    real usage + plan from Anthropic's account API

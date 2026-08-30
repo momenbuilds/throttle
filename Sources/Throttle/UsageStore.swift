@@ -4,6 +4,17 @@ import Combine
 final class UsageStore: ObservableObject {
     @Published private(set) var items: [ToolUsage] = []
     @Published private(set) var lastUpdated: Date? = nil
+    /// Tools visible in the pill and panel: detected as installed locally, or
+    /// explicitly activated in Settings (Gemini is the "activate manually" case).
+    @Published private(set) var visibleTools: [ToolUsage.Tool] = ToolUsage.Tool.allCases.filter(ToolPresence.isPresent)
+
+    /// Tools the user turned on in Settings despite no local footprint.
+    @Published private(set) var activatedTools: Set<ToolUsage.Tool> = [] {
+        didSet {
+            UserDefaults.standard.set(activatedTools.map(\.rawValue).sorted(), forKey: Keys.activatedTools)
+            recomputeVisibleTools()
+        }
+    }
 
     @Published var sessionBudget: Double {
         didSet { UserDefaults.standard.set(sessionBudget, forKey: Keys.sessionBudget) }
@@ -26,12 +37,24 @@ final class UsageStore: ObservableObject {
     @Published var showFableUsage: Bool {
         didSet { UserDefaults.standard.set(showFableUsage, forKey: Keys.showFableUsage) }
     }
+    /// Which screen edge the floating pill parks on (.top parks it as a
+    /// horizontal strip under the menu bar, by the notch).
+    @Published var pillEdge: PillEdge {
+        didSet { UserDefaults.standard.set(pillEdge.rawValue, forKey: Keys.pillEdge) }
+    }
+    /// Low-profile pill: only a sliver shows until the pointer hovers over it.
+    @Published var pillPeek: Bool {
+        didSet { UserDefaults.standard.set(pillPeek, forKey: Keys.pillPeek) }
+    }
 
     private enum Keys {
         static let sessionBudget = "throttle.sessionBudget"
         static let weeklyBudget = "throttle.weeklyBudget"
         static let notificationsEnabled = "throttle.notificationsEnabled"
         static let showFableUsage = "throttle.showFableUsage"
+        static let activatedTools = "throttle.activatedTools"
+        static let pillEdge = "throttle.pillEdge"
+        static let pillPeek = "throttle.pillPeek"
     }
 
     private var timer: Timer?
@@ -43,12 +66,30 @@ final class UsageStore: ObservableObject {
         self.weeklyBudget = defaults.object(forKey: Keys.weeklyBudget) as? Double ?? 400
         self.notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? true
         self.showFableUsage = defaults.object(forKey: Keys.showFableUsage) as? Bool ?? true
+        self.pillEdge = (defaults.string(forKey: Keys.pillEdge)).flatMap(PillEdge.init(rawValue:)) ?? .right
+        self.pillPeek = defaults.object(forKey: Keys.pillPeek) as? Bool ?? false
+        self.activatedTools = Set((defaults.stringArray(forKey: Keys.activatedTools) ?? []).compactMap(ToolUsage.Tool.init(rawValue:)))
         self.launchAtLogin = LaunchAtLogin.isEnabled
+        recomputeVisibleTools()
         if notificationsEnabled { UsageNotifier.requestAuthorizationIfNeeded() }
         refresh()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.refresh()
         }
+    }
+
+    func setToolActivated(_ tool: ToolUsage.Tool, _ activated: Bool) {
+        if activated {
+            activatedTools.insert(tool)
+        } else {
+            activatedTools.remove(tool)
+        }
+    }
+
+    private func recomputeVisibleTools() {
+        // Re-run on every toggle: presence is cheap (file stats) and installs
+        // can happen while the app runs.
+        visibleTools = ToolUsage.Tool.allCases.filter { activatedTools.contains($0) || ToolPresence.isPresent($0) }
     }
 
     func refresh() {
@@ -146,11 +187,14 @@ final class UsageStore: ObservableObject {
             note: "Google stopped serving Gemini CLI's usage API to individual accounts in June 2026 (Workspace/Enterprise unaffected)"
         ))
 
+        // Hidden tools are excluded here — not measured, not notified about.
+        let visible = visibleTools
+        let shown = result.filter { visible.contains($0.tool) }
         let notificationsEnabled = self.notificationsEnabled
         DispatchQueue.main.async {
-            self.items = result
+            self.items = shown
             self.lastUpdated = Date()
-            UsageNotifier.checkThresholds(items: result, enabled: notificationsEnabled)
+            UsageNotifier.checkThresholds(items: shown, enabled: notificationsEnabled)
         }
     }
 }

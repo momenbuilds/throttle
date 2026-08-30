@@ -83,13 +83,14 @@ struct ContentView: View {
     }
 
     private var currentItem: ToolUsage? {
-        store.items.first { $0.tool == selection.selected }
+        let effective = SelectionModel.clamp(selection.selected, to: store.visibleTools)
+        return store.items.first { $0.tool == effective }
     }
 
     private var detailCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 6) {
-                ForEach(ToolUsage.Tool.allCases, id: \.self) { tool in
+                ForEach(store.visibleTools, id: \.self) { tool in
                     let item = store.items.first { $0.tool == tool }
                     Button {
                         selection.selected = tool
@@ -100,7 +101,7 @@ struct ContentView: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .fixedSize()
                         }
-                        .foregroundStyle(selection.selected == tool ? .white : .white.opacity(0.4))
+                        .foregroundStyle(SelectionModel.clamp(selection.selected, to: store.visibleTools) == tool ? .white : .white.opacity(0.4))
                         .padding(.horizontal, 9)
                         .padding(.vertical, 7)
                         .background(
@@ -149,32 +150,44 @@ struct RingStripView: View {
     @ObservedObject var store: UsageStore
     @Binding var selected: ToolUsage.Tool
     var ringSize: CGFloat = 34
+    var horizontal: Bool = false
 
     var body: some View {
-        VStack(spacing: 16) {
-            ForEach(ToolUsage.Tool.allCases, id: \.self) { tool in
-                let item = store.items.first { $0.tool == tool }
-                Button {
-                    selected = tool
-                } label: {
-                    VStack(spacing: 4) {
-                        RingView(percent: item?.sessionPercent, tool: tool, size: ringSize)
-                            .opacity(selected == tool ? 1 : 0.6)
-                        if item?.available == true, let p = item?.sessionPercent {
-                            Text(compactPercent(p))
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(p > 1.0 ? .red : .white.opacity(0.85))
-                        } else {
-                            Text("—")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.35))
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
+        let highlighted = SelectionModel.clamp(selected, to: store.visibleTools)
+        Group {
+            if horizontal {
+                HStack(spacing: 16) { rings(highlighted) }
+                    .padding(.horizontal, 6)
+            } else {
+                VStack(spacing: 16) { rings(highlighted) }
+                    .padding(.vertical, 6)
             }
         }
-        .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private func rings(_ highlighted: ToolUsage.Tool) -> some View {
+        ForEach(store.visibleTools, id: \.self) { tool in
+            let item = store.items.first { $0.tool == tool }
+            Button {
+                selected = tool
+            } label: {
+                VStack(spacing: 4) {
+                    RingView(percent: item?.sessionPercent, tool: tool, size: ringSize)
+                        .opacity(highlighted == tool ? 1 : 0.6)
+                    if item?.available == true, let p = item?.sessionPercent {
+                        Text(compactPercent(p))
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(p > 1.0 ? .red : .white.opacity(0.85))
+                    } else {
+                        Text("—")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.35))
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private func compactPercent(_ p: Double) -> String {
