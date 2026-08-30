@@ -8,7 +8,7 @@ struct HoverDetailView: View {
     @ObservedObject var store: UsageStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
             ForEach(store.visibleTools, id: \.self) { tool in
                 let item = store.items.first { $0.tool == tool }
                 row(for: tool, item: item)
@@ -31,18 +31,36 @@ struct HoverDetailView: View {
         .shadow(color: .black.opacity(0.45), radius: 18, x: 0, y: 6)
     }
 
+    /// Glyph-only rows keep the card vertically trim; the dim reset line
+    /// under the bars says when each window renews.
     @ViewBuilder
     private func row(for tool: ToolUsage.Tool, item: ToolUsage?) -> some View {
-        HStack(spacing: 8) {
-            BrandMark(tool: tool, size: 16)
-            Text(tool.rawValue)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
-            Spacer()
-            miniBar(label: "5h", percent: item?.sessionPercent)
-            miniBar(label: "wk", percent: item?.weeklyPercent)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                BrandMark(tool: tool, size: 15)
+                miniBar(label: "5h", percent: item?.sessionPercent)
+                miniBar(label: "wk", percent: item?.weeklyPercent)
+            }
+            Text(resetLine(item))
+                .font(.system(size: 9))
+                .foregroundStyle(.white.opacity(0.35))
+                .padding(.leading, 23)
         }
         .opacity(item?.available == true ? 1 : 0.55)
+    }
+
+    private func resetLine(_ item: ToolUsage?) -> String {
+        guard let item, item.available else {
+            return item?.note.flatMap { shorten($0) } ?? "no data"
+        }
+        var parts: [String] = []
+        if let s = item.sessionResetsLabel { parts.append("5h resets \(s)") }
+        if let w = item.weeklyResetsLabel { parts.append("wk \(w)") }
+        return parts.isEmpty ? "" : parts.joined(separator: "  ·  ")
+    }
+
+    private func shorten(_ note: String) -> String {
+        note.replacingOccurrences(of: " — the stored token may be expired. Running any `claude` command refreshes it.", with: "")
     }
 
     private func miniBar(label: String, percent: Double?) -> some View {

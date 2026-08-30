@@ -34,13 +34,13 @@ struct InlineStripView: View {
     }
 
     private func percentText(_ item: ToolUsage?) -> String {
-        guard let item, item.available, let p = item.sessionPercent else { return "—" }
+        guard let item, item.available, let p = item.headlinePercent else { return "—" }
         if p >= 10 { return "\(Int(p))x" }
         return "\(Int(p * 100))%"
     }
 
     private func percentColor(_ item: ToolUsage?) -> Color {
-        guard let item, item.available, let p = item.sessionPercent else {
+        guard let item, item.available, let p = item.headlinePercent else {
             return .white.opacity(0.35)
         }
         return p > 1.0 ? .red : StatusColor.forPercent(p)

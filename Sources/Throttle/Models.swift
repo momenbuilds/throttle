@@ -25,4 +25,14 @@ struct ToolUsage: Identifiable {
     var fableWeeklyLabel: String? = nil
     let available: Bool
     let note: String?
+
+    /// The window closest to its limit across everything the provider
+    /// reports — the number a glance should carry. The session window alone
+    /// reads 0% right after a reset even when the weekly limit is the one
+    /// about to bite (Codex's UI leads with weekly for exactly this reason).
+    var headlinePercent: Double? {
+        [sessionPercent, weeklyPercent, fableWeeklyPercent]
+            .compactMap { $0 }
+            .max()
+    }
 }

@@ -49,6 +49,7 @@ enum ClaudeOAuthEngine {
     /// an empty reading; the panel's "Updated" line shows its age.
     private static let cacheLifetime: TimeInterval = 6 * 3600
     private static var lastGood: (snapshot: Snapshot, at: Date)?
+    private static let lastGoodKey = "throttle.claude.lastGood"
     /// When Anthropic's rate limiter last told us to come back. While due, we
     /// don't burn another request — the cache (or an honest failed note on a
     /// truly cold start) carries the tab until the window expires.
@@ -67,12 +68,18 @@ enum ClaudeOAuthEngine {
             if let cached, checkedAt.timeIntervalSince(cached.at) < cacheLifetime {
                 return .snapshot(cached.snapshot)
             }
+            if let restored = restorePersisted(), checkedAt.timeIntervalSince(restored.at) < cacheLifetime {
+                return .snapshot(restored.snapshot)
+            }
             return .failed
         }
 
         guard let json = fetchUsageJSON(accessToken: creds.accessToken) else {
             if let cached, checkedAt.timeIntervalSince(cached.at) < cacheLifetime {
                 return .snapshot(cached.snapshot)
+            }
+            if let restored = restorePersisted(), checkedAt.timeIntervalSince(restored.at) < cacheLifetime {
+                return .snapshot(restored.snapshot)
             }
             return .failed
         }
@@ -94,6 +101,7 @@ enum ClaudeOAuthEngine {
         cacheLock.lock()
         lastGood = (snapshot, now)
         cacheLock.unlock()
+        persist(snapshot, at: now)
         return .snapshot(snapshot)
     }
 
@@ -241,6 +249,44 @@ enum ClaudeOAuthEngine {
             }
         }
         return plan
+    }
+
+    /// A restart used to lose the in-memory cache and show "—" until the next
+    /// successful fetch — combined with 429 backoff that could outlast a
+    /// coffee break. Persisting the last-good snapshot closes that hole; its
+    /// age stays visible via the panel's "Updated" line, and reset labels in
+    /// a restored snapshot are frozen rather than live (a fair trade against
+    /// a blank reading for a metric that moves over hours).
+    private static func box(_ value: Any?) -> Any { value ?? NSNull() }
+
+    private static func persist(_ snapshot: Snapshot, at date: Date) {
+        UserDefaults.standard.set([
+            "at": date.timeIntervalSince1970,
+            "sessionPercent": snapshot.sessionPercent,
+            "sessionResetsLabel": snapshot.sessionResetsLabel,
+            "weeklyPercent": snapshot.weeklyPercent,
+            "weeklyResetsLabel": snapshot.weeklyResetsLabel,
+            "fableWeeklyPercent": box(snapshot.fableWeeklyPercent),
+            "fableWeeklyResetsLabel": box(snapshot.fableWeeklyResetsLabel),
+            "fableWeeklyLabel": box(snapshot.fableWeeklyLabel),
+            "planLabel": box(snapshot.planLabel),
+        ], forKey: lastGoodKey)
+    }
+
+    private static func restorePersisted() -> (snapshot: Snapshot, at: Date)? {
+        guard let dict = UserDefaults.standard.dictionary(forKey: lastGoodKey),
+              let at = dict["at"] as? TimeInterval else { return nil }
+        let snapshot = Snapshot(
+            sessionPercent: dict["sessionPercent"] as? Double ?? 0,
+            sessionResetsLabel: dict["sessionResetsLabel"] as? String ?? "unknown",
+            weeklyPercent: dict["weeklyPercent"] as? Double ?? 0,
+            weeklyResetsLabel: dict["weeklyResetsLabel"] as? String ?? "unknown",
+            fableWeeklyPercent: dict["fableWeeklyPercent"] as? Double,
+            fableWeeklyResetsLabel: dict["fableWeeklyResetsLabel"] as? String,
+            fableWeeklyLabel: dict["fableWeeklyLabel"] as? String,
+            planLabel: dict["planLabel"] as? String
+        )
+        return (snapshot, Date(timeIntervalSince1970: at))
     }
 
     private static func fetchUsageJSON(accessToken: String) -> [String: Any]? {
