@@ -1,8 +1,9 @@
 import Foundation
 
-/// Codex CLI writes real rate-limit percentages (from OpenAI's API) into its
-/// local session rollout files at ~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl.
-/// We just read the most recent one — no estimation needed.
+/// Reads current ChatGPT-backed Codex limits through the official Codex
+/// app-server account API. Rollout JSONL files are event logs and can contain
+/// placeholder 0/0 rate-limit fields, so they are not a reliable account-wide
+/// usage source.
 enum CodexUsageEngine {
     struct Snapshot {
         let primaryPercent: Double
@@ -12,54 +13,201 @@ enum CodexUsageEngine {
         let planType: String?
     }
 
-    static func computeSnapshot() -> Snapshot? {
-        guard let home = ProcessInfo.processInfo.environment["HOME"] else { return nil }
-        let sessionsDir = home + "/.codex/sessions"
-        let fm = FileManager.default
+    private struct AccountWindow {
+        let percent: Double
+        let durationMinutes: Double
+        let resetsAt: Double?
+    }
 
-        guard let latestFile = mostRecentRollout(in: sessionsDir, fm: fm) else { return nil }
-        guard let data = fm.contents(atPath: latestFile),
-              let text = String(data: data, encoding: .utf8) else { return nil }
+    /// Parses the official Codex app-server `account/rateLimits/read`
+    /// response. Kept internal so the external response contract can be
+    /// verified without starting a credential-bearing subprocess in tests.
+    static func parseRateLimitsResponse(_ data: Data, now: Date) -> Snapshot? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = root["result"] as? [String: Any]
+        else { return nil }
 
-        var lastRateLimits: [String: Any]? = nil
-        text.enumerateLines { line, _ in
-            guard line.contains("\"rate_limits\"") else { return }
-            guard let lineData = line.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-                  let payload = obj["payload"] as? [String: Any],
-                  let rateLimits = payload["rate_limits"] as? [String: Any]
-            else { return }
-            lastRateLimits = rateLimits
+        var limits = result["rateLimits"] as? [String: Any]
+        if limits == nil,
+           let byID = result["rateLimitsByLimitId"] as? [String: Any] {
+            limits = byID["codex"] as? [String: Any]
         }
+        guard let limits else { return nil }
 
-        guard let rl = lastRateLimits, let primary = rl["primary"] as? [String: Any],
-              let usedPercent = primary["used_percent"] as? Double else { return nil }
+        let windows = ["primary", "secondary"]
+            .compactMap { accountWindow(limits[$0]) }
+            .sorted { $0.durationMinutes < $1.durationMinutes }
+        guard let first = windows.first else { return nil }
 
-        let now = Date()
-        let primaryResetLabel = resetLabel(resetsAt: primary["resets_at"], now: now)
-
-        var secondaryPercent: Double? = nil
-        var secondaryResetLabel: String? = nil
-        if let secondary = rl["secondary"] as? [String: Any],
-           let sPercent = secondary["used_percent"] as? Double {
-            secondaryPercent = sPercent
-            secondaryResetLabel = resetLabel(resetsAt: secondary["resets_at"], now: now)
+        let session: AccountWindow?
+        let weekly: AccountWindow?
+        if windows.count > 1 {
+            session = first
+            weekly = windows.last
+        } else if first.durationMinutes >= 24 * 60 {
+            session = nil
+            weekly = first
+        } else {
+            session = first
+            weekly = nil
         }
-
-        let planType = rl["plan_type"] as? String
 
         return Snapshot(
-            primaryPercent: usedPercent / 100.0,
-            primaryResetsLabel: primaryResetLabel,
-            secondaryPercent: secondaryPercent.map { $0 / 100.0 },
-            secondaryResetsLabel: secondaryResetLabel,
-            planType: planType
+            primaryPercent: session?.percent ?? 0,
+            primaryResetsLabel: resetLabel(resetsAt: session?.resetsAt, now: now),
+            secondaryPercent: weekly?.percent,
+            secondaryResetsLabel: weekly.map { resetLabel(resetsAt: $0.resetsAt, now: now) },
+            planType: limits["planType"] as? String
         )
     }
 
-    private static func resetLabel(resetsAt: Any?, now: Date) -> String {
-        guard let seconds = resetsAt as? Double else { return "unknown" }
-        let resetDate = Date(timeIntervalSince1970: seconds)
+    static func computeSnapshot() -> Snapshot? {
+        guard let response = fetchRateLimitsResponse() else { return nil }
+        return parseRateLimitsResponse(response, now: Date())
+    }
+
+    private static func accountWindow(_ value: Any?) -> AccountWindow? {
+        guard let object = value as? [String: Any],
+              let usedPercent = (object["usedPercent"] as? NSNumber)?.doubleValue,
+              let durationMinutes = (object["windowDurationMins"] as? NSNumber)?.doubleValue
+        else { return nil }
+        return AccountWindow(
+            percent: usedPercent / 100,
+            durationMinutes: durationMinutes,
+            resetsAt: (object["resetsAt"] as? NSNumber)?.doubleValue
+        )
+    }
+
+    /// Starts the locally installed official app-server, performs only the
+    /// initialization handshake and one read-only account request, then stops
+    /// it. The subprocess owns ChatGPT authentication; Throttle never reads or
+    /// copies Codex tokens.
+    private static func fetchRateLimitsResponse() -> Data? {
+        guard let executable = codexExecutableURL() else { return nil }
+
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["app-server", "--listen", "stdio://"]
+        process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+
+        let input = Pipe()
+        let output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+
+        let completed = DispatchSemaphore(value: 0)
+        let completionLock = NSLock()
+        let responseLock = NSLock()
+        var didComplete = false
+        var response: Data?
+        var buffer = Data()
+
+        func completeOnce() {
+            completionLock.lock()
+            let shouldSignal = !didComplete
+            didComplete = true
+            completionLock.unlock()
+            if shouldSignal { completed.signal() }
+        }
+
+        output.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                completeOnce()
+                return
+            }
+
+            var foundResponse = false
+            responseLock.lock()
+            buffer.append(chunk)
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                let line = Data(buffer[..<newline])
+                buffer.removeSubrange(...newline)
+                guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                      (object["id"] as? NSNumber)?.intValue == 1
+                else { continue }
+                if object["result"] is [String: Any] { response = line }
+                foundResponse = true
+                break
+            }
+            responseLock.unlock()
+            if foundResponse { completeOnce() }
+        }
+        process.terminationHandler = { _ in completeOnce() }
+
+        do {
+            try process.run()
+        } catch {
+            output.fileHandleForReading.readabilityHandler = nil
+            return nil
+        }
+
+        let messages: [[String: Any]] = [
+            [
+                "method": "initialize",
+                "id": 0,
+                "params": [
+                    "clientInfo": [
+                        "name": "throttle",
+                        "title": "Throttle",
+                        "version": "1.0",
+                    ],
+                ],
+            ],
+            ["method": "initialized", "params": [:]],
+            ["method": "account/rateLimits/read", "id": 1],
+        ]
+        var requestData = Data()
+        for message in messages {
+            guard let line = try? JSONSerialization.data(withJSONObject: message) else {
+                process.terminate()
+                output.fileHandleForReading.readabilityHandler = nil
+                return nil
+            }
+            requestData.append(line)
+            requestData.append(0x0A)
+        }
+        input.fileHandleForWriting.write(requestData)
+
+        _ = completed.wait(timeout: .now() + 15)
+        output.fileHandleForReading.readabilityHandler = nil
+        input.fileHandleForWriting.closeFile()
+        if process.isRunning { process.terminate() }
+
+        responseLock.lock()
+        let captured = response
+        responseLock.unlock()
+        return captured
+    }
+
+    private static func codexExecutableURL() -> URL? {
+        let fm = FileManager.default
+        let home = fm.homeDirectoryForCurrentUser.path
+        var candidates = [
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
+            "/Applications/Codex.app/Contents/Resources/codex",
+            home + "/.local/bin/codex",
+            "/opt/homebrew/bin/codex",
+            "/usr/local/bin/codex",
+        ]
+
+        let environmentPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        candidates.append(contentsOf: environmentPath.split(separator: ":").map { String($0) + "/codex" })
+
+        let nvmRoot = home + "/.nvm/versions/node"
+        if let versions = try? fm.contentsOfDirectory(atPath: nvmRoot) {
+            candidates.append(contentsOf: versions.sorted {
+                $0.compare($1, options: .numeric) == .orderedDescending
+            }.map { nvmRoot + "/" + $0 + "/bin/codex" })
+        }
+
+        return candidates.first(where: fm.isExecutableFile(atPath:)).map(URL.init(fileURLWithPath:))
+    }
+
+    private static func resetLabel(resetsAt: Double?, now: Date) -> String {
+        guard let resetsAt else { return "unknown" }
+        let resetDate = Date(timeIntervalSince1970: resetsAt)
         let interval = resetDate.timeIntervalSince(now)
         if interval <= 0 { return "now" }
         let hours = Int(interval / 3600)
@@ -71,20 +219,5 @@ enum CodexUsageEngine {
         } else {
             return "in \(Int(interval / 60)) min"
         }
-    }
-
-    private static func mostRecentRollout(in sessionsDir: String, fm: FileManager) -> String? {
-        guard let enumerator = fm.enumerator(atPath: sessionsDir) else { return nil }
-        var best: (path: String, date: Date)? = nil
-        for case let path as String in enumerator {
-            guard path.hasSuffix(".jsonl") else { continue }
-            let fullPath = sessionsDir + "/" + path
-            guard let attrs = try? fm.attributesOfItem(atPath: fullPath),
-                  let modified = attrs[.modificationDate] as? Date else { continue }
-            if best == nil || modified > best!.date {
-                best = (fullPath, modified)
-            }
-        }
-        return best?.path
     }
 }

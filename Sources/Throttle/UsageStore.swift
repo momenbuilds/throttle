@@ -163,8 +163,8 @@ final class UsageStore: ObservableObject {
         }
 
         if let snap = CodexUsageEngine.computeSnapshot() {
-            let note = snap.planType.map { "Plan: \($0) — live from OpenAI API" }
-                ?? (snap.secondaryPercent == nil ? "Weekly window not exposed for your plan by OpenAI's API" : nil)
+            let note = snap.planType.map { "Plan: \($0.capitalized) — live from OpenAI" }
+                ?? (snap.secondaryPercent == nil ? "OpenAI did not return a weekly limit for this account" : nil)
             result.append(ToolUsage(
                 tool: .codex,
                 sessionPercent: snap.primaryPercent,
@@ -175,7 +175,7 @@ final class UsageStore: ObservableObject {
                 note: note
             ))
         } else {
-            result.append(ToolUsage(tool: .codex, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No local Codex CLI sessions found"))
+            result.append(ToolUsage(tool: .codex, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "Unable to load Codex usage. Make sure Codex is installed and signed in to ChatGPT."))
         }
 
         if let snap = ZCodeUsageEngine.computeSnapshot() {
