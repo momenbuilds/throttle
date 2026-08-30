@@ -62,7 +62,8 @@ final class UsageStore: ObservableObject {
     private func computeAndPublish(sessionBudget: Double, weeklyBudget: Double) {
         var result: [ToolUsage] = []
 
-        if let oauth = ClaudeOAuthEngine.computeSnapshot() {
+        switch ClaudeOAuthEngine.computeOutcome() {
+        case .snapshot(let oauth):
             result.append(ToolUsage(
                 tool: .claude,
                 sessionPercent: oauth.sessionPercent,
@@ -75,20 +76,33 @@ final class UsageStore: ObservableObject {
                 available: true,
                 note: oauth.planLabel.map { "Plan: \($0) — live from Anthropic" } ?? "Live from Anthropic"
             ))
-        } else if let snap = ClaudeUsageEngine.computeSnapshot(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget) {
+        case .failed:
+            // Credentials exist but the API didn't answer (expired token,
+            // rate limit, network). A guessed cost here would present a wrong
+            // number as fact — say what happened instead.
             result.append(ToolUsage(
                 tool: .claude,
-                sessionPercent: snap.sessionPercent,
-                sessionResetsLabel: snap.sessionResetsLabel,
-                sessionCost: snap.sessionCost,
-                weeklyPercent: snap.weeklyPercent,
-                weeklyResetsLabel: snap.weeklyResetsLabel,
-                weeklyCost: snap.weeklyCost,
-                available: true,
-                note: "Sign in with `claude login` for exact numbers — estimated cost from local logs for now"
+                sessionPercent: nil, sessionResetsLabel: nil,
+                weeklyPercent: nil, weeklyResetsLabel: nil,
+                available: false,
+                note: "Signed in, but Anthropic's usage API didn't respond — the stored token may be expired. Running any `claude` command refreshes it."
             ))
-        } else {
-            result.append(ToolUsage(tool: .claude, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No local Claude Code logs found"))
+        case .noCredentials:
+            if let snap = ClaudeUsageEngine.computeSnapshot(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget) {
+                result.append(ToolUsage(
+                    tool: .claude,
+                    sessionPercent: snap.sessionPercent,
+                    sessionResetsLabel: snap.sessionResetsLabel,
+                    sessionCost: snap.sessionCost,
+                    weeklyPercent: snap.weeklyPercent,
+                    weeklyResetsLabel: snap.weeklyResetsLabel,
+                    weeklyCost: snap.weeklyCost,
+                    available: true,
+                    note: "Sign in with `claude login` for exact numbers — estimated cost from local logs for now"
+                ))
+            } else {
+                result.append(ToolUsage(tool: .claude, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No local Claude Code logs found"))
+            }
         }
 
         if let snap = CodexUsageEngine.computeSnapshot() {

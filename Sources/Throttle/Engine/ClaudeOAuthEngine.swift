@@ -23,10 +23,67 @@ enum ClaudeOAuthEngine {
         let planLabel: String?
     }
 
-    private struct Credentials {
+    /// Why computeOutcome() landed where it did. `noCredentials` is the only
+    /// state that legitimately falls back to the local-log estimate (the user
+    /// is signed out); `failed` means credentials exist but the API didn't
+    /// answer (expired token, rate limit, network) — showing a guessed cost
+    /// there would present a wrong number as fact, so the store shows an
+    /// explanatory note instead.
+    enum Outcome {
+        case snapshot(Snapshot)
+        case noCredentials
+        case failed
+    }
+
+    struct Credentials {
         let accessToken: String
         let rateLimitTier: String?
         let subscriptionType: String?
+    }
+
+    /// Keeps the last successful snapshot for a while so the usage endpoint's
+    /// aggressive rate limiting (observed retry-after of ~37 minutes) doesn't
+    /// blank the tab for most of an hour on a single 429.
+    private static let cacheLifetime: TimeInterval = 2 * 3600
+    private static var lastGood: (snapshot: Snapshot, at: Date)?
+    private static let cacheLock = NSLock()
+
+    static func computeOutcome() -> Outcome {
+        guard let creds = loadCredentials() else { return .noCredentials }
+        guard let json = fetchUsageJSON(accessToken: creds.accessToken) else {
+            cacheLock.lock()
+            let cached = lastGood
+            cacheLock.unlock()
+            if let cached, Date().timeIntervalSince(cached.at) < cacheLifetime {
+                return .snapshot(cached.snapshot)
+            }
+            return .failed
+        }
+        guard let session = window(json, keys: ["five_hour"]) else { return .failed }
+        let weekly = window(json, keys: ["seven_day"])
+        let fable = scopedWeeklyLimit(json, modelDisplayName: "fable")
+
+        let now = Date()
+        let snapshot = Snapshot(
+            sessionPercent: session.utilization,
+            sessionResetsLabel: relativeLabel(until: session.resetsAt, now: now),
+            weeklyPercent: weekly?.utilization ?? 0,
+            weeklyResetsLabel: weekly.map { relativeLabel(until: $0.resetsAt, now: now) } ?? "unknown",
+            fableWeeklyPercent: fable?.utilization,
+            fableWeeklyResetsLabel: fable.map { relativeLabel(until: $0.resetsAt, now: now) },
+            fableWeeklyLabel: fable?.label,
+            planLabel: planLabel(rateLimitTier: creds.rateLimitTier, subscriptionType: creds.subscriptionType)
+        )
+        cacheLock.lock()
+        lastGood = (snapshot, now)
+        cacheLock.unlock()
+        return .snapshot(snapshot)
+    }
+
+    /// Kept for call sites that only care about the value.
+    static func computeSnapshot() -> Snapshot? {
+        if case let .snapshot(snap) = computeOutcome() { return snap }
+        return nil
     }
 
     private static func loadCredentials() -> Credentials? {
@@ -56,7 +113,9 @@ enum ClaudeOAuthEngine {
         return parseCredentials(data)
     }
 
-    private static func parseCredentials(_ data: Data) -> Credentials? {
+    /// Internal (not private) so tests can pin the stored-credential shape —
+    /// the boundary that decides between live, estimate, and failed states.
+    static func parseCredentials(_ data: Data) -> Credentials? {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = root["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String, !token.isEmpty
@@ -66,26 +125,6 @@ enum ClaudeOAuthEngine {
             accessToken: token,
             rateLimitTier: oauth["rateLimitTier"] as? String,
             subscriptionType: oauth["subscriptionType"] as? String
-        )
-    }
-
-    static func computeSnapshot() -> Snapshot? {
-        guard let creds = loadCredentials() else { return nil }
-        guard let json = fetchUsageJSON(accessToken: creds.accessToken) else { return nil }
-        guard let session = window(json, keys: ["five_hour"]) else { return nil }
-        let weekly = window(json, keys: ["seven_day"])
-        let fable = scopedWeeklyLimit(json, modelDisplayName: "fable")
-
-        let now = Date()
-        return Snapshot(
-            sessionPercent: session.utilization,
-            sessionResetsLabel: relativeLabel(until: session.resetsAt, now: now),
-            weeklyPercent: weekly?.utilization ?? 0,
-            weeklyResetsLabel: weekly.map { relativeLabel(until: $0.resetsAt, now: now) } ?? "unknown",
-            fableWeeklyPercent: fable?.utilization,
-            fableWeeklyResetsLabel: fable.map { relativeLabel(until: $0.resetsAt, now: now) },
-            fableWeeklyLabel: fable?.label,
-            planLabel: planLabel(rateLimitTier: creds.rateLimitTier, subscriptionType: creds.subscriptionType)
         )
     }
 
