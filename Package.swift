@@ -9,6 +9,11 @@ let package = Package(
             name: "Throttle",
             path: "Sources/Throttle",
             resources: [.copy("Resources/Brand")]
+        ),
+        .testTarget(
+            name: "ThrottleTests",
+            dependencies: ["Throttle"],
+            path: "Tests/ThrottleTests"
         )
     ]
 )
