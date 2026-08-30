@@ -43,20 +43,35 @@ enum ClaudeOAuthEngine {
         let expiresAt: Double?
     }
 
-    /// Keeps the last successful snapshot for a while so the usage endpoint's
-    /// aggressive rate limiting (observed retry-after of ~37 minutes) doesn't
-    /// blank the tab for most of an hour on a single 429.
-    private static let cacheLifetime: TimeInterval = 2 * 3600
+    /// Keeps the last successful snapshot so the usage endpoint's aggressive
+    /// rate limiting (observed retry-after from seconds to ~37 minutes)
+    /// doesn't blank the tab after a single 429. Served stale-but-real beats
+    /// an empty reading; the panel's "Updated" line shows its age.
+    private static let cacheLifetime: TimeInterval = 6 * 3600
     private static var lastGood: (snapshot: Snapshot, at: Date)?
+    /// When Anthropic's rate limiter last told us to come back. While due, we
+    /// don't burn another request — the cache (or an honest failed note on a
+    /// truly cold start) carries the tab until the window expires.
+    private static var retryAfterUntil: Date?
     private static let cacheLock = NSLock()
 
     static func computeOutcome() -> Outcome {
         guard let creds = loadCredentials() else { return .noCredentials }
+
+        let checkedAt = Date()
+        cacheLock.lock()
+        let backingOff = retryAfterUntil.map { checkedAt < $0 } ?? false
+        let cached = lastGood
+        cacheLock.unlock()
+        if backingOff {
+            if let cached, checkedAt.timeIntervalSince(cached.at) < cacheLifetime {
+                return .snapshot(cached.snapshot)
+            }
+            return .failed
+        }
+
         guard let json = fetchUsageJSON(accessToken: creds.accessToken) else {
-            cacheLock.lock()
-            let cached = lastGood
-            cacheLock.unlock()
-            if let cached, Date().timeIntervalSince(cached.at) < cacheLifetime {
+            if let cached, checkedAt.timeIntervalSince(cached.at) < cacheLifetime {
                 return .snapshot(cached.snapshot)
             }
             return .failed
@@ -242,7 +257,21 @@ enum ClaudeOAuthEngine {
         var result: [String: Any]?
         let task = URLSession.shared.dataTask(with: request) { data, response, _ in
             defer { semaphore.signal() }
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200, let data else { return }
+            guard let http = response as? HTTPURLResponse else { return }
+            if http.statusCode == 429,
+               let retryAfter = http.value(forHTTPHeaderField: "retry-after"),
+               let seconds = TimeInterval(retryAfter) {
+                // Observed values range from ~200s to ~2250s; clamp sanely.
+                let wait = min(max(seconds, 60), 3600)
+                cacheLock.lock()
+                retryAfterUntil = Date().addingTimeInterval(wait)
+                cacheLock.unlock()
+                return
+            }
+            guard http.statusCode == 200, let data else { return }
+            cacheLock.lock()
+            retryAfterUntil = nil
+            cacheLock.unlock()
             result = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         }
         task.resume()

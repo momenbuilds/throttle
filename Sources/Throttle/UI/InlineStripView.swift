@@ -9,16 +9,16 @@ struct InlineStripView: View {
     @Binding var selected: ToolUsage.Tool
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 14) {
             ForEach(store.visibleTools, id: \.self) { tool in
                 let item = store.items.first { $0.tool == tool }
                 Button {
                     selected = tool
                 } label: {
                     HStack(spacing: 4) {
-                        BrandMark(tool: tool, size: 13)
+                        BrandMark(tool: tool, size: 15)
                         Text(percentText(item))
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
                             .foregroundStyle(percentColor(item))
                             .monospacedDigit()
                     }
@@ -27,8 +27,8 @@ struct InlineStripView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 9)
-        .frame(height: 22)
+        .padding(.horizontal, 10)
+        .frame(height: 24)
         .background(Capsule().fill(Color.black.opacity(0.35)))
         .overlay(Capsule().stroke(Color.white.opacity(0.10)))
     }

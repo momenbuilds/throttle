@@ -58,6 +58,11 @@ final class FloatingPillWindow: NSResponder {
     private var cancellables: Set<AnyCancellable> = []
     private var collapseWork: DispatchWorkItem?
     private var trackingArea: NSTrackingArea?
+    /// Hover card (beside-notch mode): appears under the strip on mouse-over.
+    private var hoverPanel: NSPanel?
+    private var hoverHosting: NSHostingController<HoverDetailView>?
+    private var hoverTrackingArea: NSTrackingArea?
+    private var hideHoverWork: DispatchWorkItem?
     var onRingTapped: ((ToolUsage.Tool, NSView) -> Void)?
 
     private static let originKey = "throttle.pillOrigin"
@@ -65,7 +70,7 @@ final class FloatingPillWindow: NSResponder {
     private static let peekSliver: CGFloat = 16
     private static let gap: CGFloat = 6
     /// Breathing room between the pill and the notch itself.
-    private static let notchGap: CGFloat = 14
+    private static let notchGap: CGFloat = 30
     /// Menu bar band height (also the inline strip's window height).
     private static let menuBarHeight: CGFloat = 32
 
@@ -289,18 +294,108 @@ final class FloatingPillWindow: NSResponder {
 
     override func mouseEntered(with event: NSEvent) {
         collapseWork?.cancel()
-        guard edge == .top || (isPeek && !edge.isTopEdge), panel.isVisible else { return }
+        guard panel.isVisible else { return }
+        if edge == .notchLeft {
+            hideHoverWork?.cancel()
+            showHoverCard()
+            return
+        }
+        guard edge == .top || (isPeek && !edge.isTopEdge) else { return }
         slide(to: expandedOrigin(for: panel.frame.size, in: screenFrame), animated: true)
     }
 
     override func mouseExited(with event: NSEvent) {
-        guard edge == .top || (isPeek && !edge.isTopEdge), panel.isVisible else { return }
+        guard panel.isVisible else { return }
+        if edge == .notchLeft {
+            // Hide only once the pointer has left both the strip and the
+            // card itself — moving from one to the other keeps it alive.
+            let work = DispatchWorkItem { [weak self] in self?.hideHoverCard() }
+            hideHoverWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+            return
+        }
+        guard edge == .top || (isPeek && !edge.isTopEdge) else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.slide(to: self.restOrigin(for: self.panel.frame.size, in: self.screenFrame), animated: true)
         }
         collapseWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+    }
+
+    // MARK: hover card (beside-notch)
+
+    private func showHoverCard() {
+        if let cardPanel = hoverPanel, cardPanel.isVisible { return }
+        let hosting: NSHostingController<HoverDetailView>
+        if let hoverHosting {
+            hosting = hoverHosting
+        } else {
+            hosting = NSHostingController(rootView: HoverDetailView(store: store))
+            hosting.sizingOptions = [.preferredContentSize]
+            hosting.view.wantsLayer = true
+            hosting.view.layer?.backgroundColor = .clear
+            hoverHosting = hosting
+        }
+
+        let cardPanel: NSPanel
+        if let hoverPanel {
+            cardPanel = hoverPanel
+        } else {
+            cardPanel = EdgePanel(
+                contentRect: NSRect(x: 0, y: 0, width: 320, height: 160),
+                styleMask: [.borderless, .nonactivatingPanel],
+                backing: .buffered, defer: false
+            )
+            cardPanel.isOpaque = false
+            cardPanel.backgroundColor = .clear
+            cardPanel.hasShadow = false
+            cardPanel.level = .floating
+            cardPanel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            cardPanel.hidesOnDeactivate = false
+            cardPanel.contentViewController = hosting
+            hoverPanel = cardPanel
+        }
+
+        var size = hosting.view.fittingSize
+        if size.width < 1 || size.height < 1 { size = NSSize(width: 320, height: 160) }
+        cardPanel.setContentSize(size)
+        // Align the card's left edge with the strip, hanging just below the
+        // menu bar band; slide up a touch on fade-in so it reads as growing
+        // out of the bar.
+        let strip = panel.frame
+        let x = max(strip.minX, screenFrame.minX + 4)
+        let y = screenTop - Self.menuBarHeight - size.height - 8
+        let finalFrame = NSRect(x: x, y: y, width: size.width, height: size.height)
+        cardPanel.setFrame(finalFrame.offsetBy(dx: 0, dy: 10), display: false)
+        cardPanel.alphaValue = 0
+        cardPanel.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.18
+            cardPanel.animator().setFrame(finalFrame, display: true)
+            cardPanel.animator().alphaValue = 1
+        }
+
+        // Keep the card alive while the pointer is inside it.
+        if hoverTrackingArea == nil, let content = cardPanel.contentView {
+            let area = NSTrackingArea(
+                rect: content.bounds,
+                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self, userInfo: nil
+            )
+            content.addTrackingArea(area)
+            hoverTrackingArea = area
+        }
+    }
+
+    private func hideHoverCard() {
+        guard let cardPanel = hoverPanel, cardPanel.isVisible else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            cardPanel.animator().alphaValue = 0
+        }, completionHandler: {
+            cardPanel.orderOut(nil)
+        })
     }
 
     // MARK: visibility
@@ -314,6 +409,7 @@ final class FloatingPillWindow: NSResponder {
 
     func hide() {
         panel.orderOut(nil)
+        hideHoverCard()
     }
 
     var isVisible: Bool { panel.isVisible }
