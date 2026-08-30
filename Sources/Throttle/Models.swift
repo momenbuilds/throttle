@@ -26,13 +26,12 @@ struct ToolUsage: Identifiable {
     let available: Bool
     let note: String?
 
-    /// The window closest to its limit across everything the provider
-    /// reports — the number a glance should carry. The session window alone
-    /// reads 0% right after a reset even when the weekly limit is the one
-    /// about to bite (Codex's UI leads with weekly for exactly this reason).
+    /// Keep the compact strip consistent across providers: show the ordinary
+    /// session window while it is active, otherwise fall back to the ordinary
+    /// weekly window. Model-specific constraints remain visible in details
+    /// instead of silently taking over the unlabeled headline number.
     var headlinePercent: Double? {
-        [sessionPercent, weeklyPercent, fableWeeklyPercent]
-            .compactMap { $0 }
-            .max()
+        if let sessionPercent, sessionPercent > 0 { return sessionPercent }
+        return weeklyPercent ?? sessionPercent
     }
 }

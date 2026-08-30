@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Compact per-provider usage card that appears when the pointer rests on the
 /// inline strip — no click needed. One row per visible tool with mini bars for
-/// each window the provider actually reports (session / weekly). Mouse away
-/// and it fades; click the strip for the full persistent panel.
+/// each window the provider actually reports. Mouse away and it fades; click
+/// the strip for the full persistent panel.
 struct HoverDetailView: View {
     @ObservedObject var store: UsageStore
 
@@ -41,6 +41,14 @@ struct HoverDetailView: View {
                 miniBar(label: "5h", percent: item?.sessionPercent)
                 miniBar(label: "wk", percent: item?.weeklyPercent)
             }
+            if store.showFableUsage, let fablePercent = item?.fableWeeklyPercent {
+                miniBar(
+                    label: item?.fableWeeklyLabel ?? "Fable",
+                    percent: fablePercent,
+                    labelWidth: 38
+                )
+                .padding(.leading, 23)
+            }
             Text(resetLine(item))
                 .font(.system(size: 9))
                 .foregroundStyle(.white.opacity(0.35))
@@ -56,6 +64,9 @@ struct HoverDetailView: View {
         var parts: [String] = []
         if let s = item.sessionResetsLabel { parts.append("5h resets \(s)") }
         if let w = item.weeklyResetsLabel { parts.append("wk \(w)") }
+        if store.showFableUsage, let f = item.fableWeeklyResetsLabel {
+            parts.append("\(item.fableWeeklyLabel ?? "Fable") \(f)")
+        }
         return parts.isEmpty ? "" : parts.joined(separator: "  ·  ")
     }
 
@@ -63,12 +74,12 @@ struct HoverDetailView: View {
         note.replacingOccurrences(of: " — the stored token may be expired. Running any `claude` command refreshes it.", with: "")
     }
 
-    private func miniBar(label: String, percent: Double?) -> some View {
+    private func miniBar(label: String, percent: Double?, labelWidth: CGFloat = 16) -> some View {
         HStack(spacing: 4) {
             Text(label)
                 .font(.system(size: 9.5))
                 .foregroundStyle(.white.opacity(0.4))
-                .frame(width: 16, alignment: .leading)
+                .frame(width: labelWidth, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.10))

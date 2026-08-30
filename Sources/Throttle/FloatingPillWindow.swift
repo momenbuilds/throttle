@@ -165,6 +165,26 @@ final class FloatingPillWindow: NSResponder {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.reconfigure() }
             .store(in: &cancellables)
+        store.$items
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                // @Published emits before SwiftUI lays out the new percent
+                // strings. Re-measure on the next run-loop turn so a wider
+                // value cannot grow toward the notch and consume its gap.
+                DispatchQueue.main.async { self?.reanchorInlineStrip() }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func reanchorInlineStrip() {
+        guard edge == .notchLeft, panel.isVisible, let contentView = panel.contentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+        let size = contentView.fittingSize
+        guard size.width >= 1, size.height >= 1 else { return }
+        panel.setContentSize(size)
+        panel.setFrameOrigin(restOrigin(for: size, in: screenFrame))
+        installTracking()
     }
 
     /// Settings changed: rebuild content (axis may flip), forget the old
