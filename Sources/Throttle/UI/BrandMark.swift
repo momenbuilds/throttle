@@ -39,6 +39,7 @@ struct BrandMark: View {
         case .claude: name = "claude"
         case .codex: name = "openai"
         case .gemini: name = "gemini"
+        case .zcode: name = "zcode"
         }
         guard let url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Brand"),
               let image = NSImage(contentsOf: url)

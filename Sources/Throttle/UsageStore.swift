@@ -107,6 +107,21 @@ final class UsageStore: ObservableObject {
             result.append(ToolUsage(tool: .codex, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No local Codex CLI sessions found"))
         }
 
+        if let snap = ZCodeUsageEngine.computeSnapshot() {
+            let note = snap.planLevel.map { "Plan: \($0.capitalized) — live from Z.ai" } ?? "Live from Z.ai"
+            result.append(ToolUsage(
+                tool: .zcode,
+                sessionPercent: snap.sessionPercent,
+                sessionResetsLabel: snap.sessionResetsLabel,
+                weeklyPercent: snap.weeklyPercent,
+                weeklyResetsLabel: snap.weeklyResetsLabel,
+                available: true,
+                note: note
+            ))
+        } else {
+            result.append(ToolUsage(tool: .zcode, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No coding-plan ZCode config found (~/.zcode/cli/config.json)"))
+        }
+
         result.append(ToolUsage(
             tool: .gemini,
             sessionPercent: nil,

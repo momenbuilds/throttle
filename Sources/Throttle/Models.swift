@@ -5,6 +5,7 @@ struct ToolUsage: Identifiable {
         case claude = "Claude"
         case codex = "Codex"
         case gemini = "Gemini"
+        case zcode = "ZCode"
     }
 
     var id: String { tool.rawValue }
