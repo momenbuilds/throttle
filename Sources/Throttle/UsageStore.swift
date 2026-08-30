@@ -98,6 +98,7 @@ final class UsageStore: ObservableObject {
             hiddenTools.insert(tool)
             activatedTools.remove(tool)
         }
+        refresh()
     }
 
     private func recomputeVisibleTools() {
@@ -111,106 +112,112 @@ final class UsageStore: ObservableObject {
     func refresh() {
         let sessionBudget = self.sessionBudget
         let weeklyBudget = self.weeklyBudget
+        let visible = self.visibleTools
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            self?.computeAndPublish(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget)
+            self?.computeAndPublish(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget, visible: visible)
         }
     }
 
-    private func computeAndPublish(sessionBudget: Double, weeklyBudget: Double) {
+    private func computeAndPublish(sessionBudget: Double, weeklyBudget: Double, visible: [ToolUsage.Tool]) {
         var result: [ToolUsage] = []
 
-        switch ClaudeOAuthEngine.computeOutcome() {
-        case .snapshot(let oauth):
-            result.append(ToolUsage(
-                tool: .claude,
-                sessionPercent: oauth.sessionPercent,
-                sessionResetsLabel: oauth.sessionResetsLabel,
-                weeklyPercent: oauth.weeklyPercent,
-                weeklyResetsLabel: oauth.weeklyResetsLabel,
-                fableWeeklyPercent: oauth.fableWeeklyPercent,
-                fableWeeklyResetsLabel: oauth.fableWeeklyResetsLabel,
-                fableWeeklyLabel: oauth.fableWeeklyLabel,
-                available: true,
-                note: oauth.planLabel.map { "Plan: \($0) — live from Anthropic" } ?? "Live from Anthropic"
-            ))
-        case .failed:
-            // Credentials exist but the API didn't answer (expired token,
-            // rate limit, network). A guessed cost here would present a wrong
-            // number as fact — say what happened instead.
-            result.append(ToolUsage(
-                tool: .claude,
-                sessionPercent: nil, sessionResetsLabel: nil,
-                weeklyPercent: nil, weeklyResetsLabel: nil,
-                available: false,
-                note: "Signed in, but Anthropic's usage API didn't respond — the stored token may be expired. Running any `claude` command refreshes it."
-            ))
-        case .noCredentials:
-            if let snap = ClaudeUsageEngine.computeSnapshot(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget) {
+        if visible.contains(.claude) {
+            switch ClaudeOAuthEngine.computeOutcome() {
+            case .snapshot(let oauth):
                 result.append(ToolUsage(
                     tool: .claude,
-                    sessionPercent: snap.sessionPercent,
-                    sessionResetsLabel: snap.sessionResetsLabel,
-                    sessionCost: snap.sessionCost,
-                    weeklyPercent: snap.weeklyPercent,
-                    weeklyResetsLabel: snap.weeklyResetsLabel,
-                    weeklyCost: snap.weeklyCost,
+                    sessionPercent: oauth.sessionPercent,
+                    sessionResetsLabel: oauth.sessionResetsLabel,
+                    weeklyPercent: oauth.weeklyPercent,
+                    weeklyResetsLabel: oauth.weeklyResetsLabel,
+                    fableWeeklyPercent: oauth.fableWeeklyPercent,
+                    fableWeeklyResetsLabel: oauth.fableWeeklyResetsLabel,
+                    fableWeeklyLabel: oauth.fableWeeklyLabel,
                     available: true,
-                    note: "Sign in with `claude login` for exact numbers — estimated cost from local logs for now"
+                    note: oauth.planLabel.map { "Plan: \($0) — live from Anthropic" } ?? "Live from Anthropic"
+                ))
+            case .failed:
+                // Credentials exist but the API didn't answer (expired token,
+                // rate limit, network). A guessed cost here would present a wrong
+                // number as fact — say what happened instead.
+                result.append(ToolUsage(
+                    tool: .claude,
+                    sessionPercent: nil, sessionResetsLabel: nil,
+                    weeklyPercent: nil, weeklyResetsLabel: nil,
+                    available: false,
+                    note: "Signed in, but Anthropic's usage API didn't respond — the stored token may be expired. Running any `claude` command refreshes it."
+                ))
+            case .noCredentials:
+                if let snap = ClaudeUsageEngine.computeSnapshot(sessionBudget: sessionBudget, weeklyBudget: weeklyBudget) {
+                    result.append(ToolUsage(
+                        tool: .claude,
+                        sessionPercent: snap.sessionPercent,
+                        sessionResetsLabel: snap.sessionResetsLabel,
+                        sessionCost: snap.sessionCost,
+                        weeklyPercent: snap.weeklyPercent,
+                        weeklyResetsLabel: snap.weeklyResetsLabel,
+                        weeklyCost: snap.weeklyCost,
+                        available: true,
+                        note: "Sign in with `claude login` for exact numbers — estimated cost from local logs for now"
+                    ))
+                } else {
+                    result.append(ToolUsage(tool: .claude, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No local Claude Code logs found"))
+                }
+        }
+        }
+
+        if visible.contains(.codex) {
+            if let snap = CodexUsageEngine.computeSnapshot() {
+                let note = snap.planType.map { "Plan: \($0.capitalized) — live from OpenAI" }
+                    ?? (snap.secondaryPercent == nil ? "OpenAI did not return a weekly limit for this account" : nil)
+                result.append(ToolUsage(
+                    tool: .codex,
+                    sessionPercent: snap.primaryPercent,
+                    sessionResetsLabel: snap.primaryResetsLabel,
+                    weeklyPercent: snap.secondaryPercent,
+                    weeklyResetsLabel: snap.secondaryResetsLabel,
+                    available: true,
+                    note: note
                 ))
             } else {
-                result.append(ToolUsage(tool: .claude, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No local Claude Code logs found"))
-            }
+                result.append(ToolUsage(tool: .codex, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "Unable to load Codex usage. Make sure Codex is installed and signed in to ChatGPT."))
+        }
         }
 
-        if let snap = CodexUsageEngine.computeSnapshot() {
-            let note = snap.planType.map { "Plan: \($0.capitalized) — live from OpenAI" }
-                ?? (snap.secondaryPercent == nil ? "OpenAI did not return a weekly limit for this account" : nil)
+        if visible.contains(.zcode) {
+            if let snap = ZCodeUsageEngine.computeSnapshot() {
+                let note = snap.planLevel.map { "Plan: \($0.capitalized) — live from Z.ai" } ?? "Live from Z.ai"
+                result.append(ToolUsage(
+                    tool: .zcode,
+                    sessionPercent: snap.sessionPercent,
+                    sessionResetsLabel: snap.sessionResetsLabel,
+                    weeklyPercent: snap.weeklyPercent,
+                    weeklyResetsLabel: snap.weeklyResetsLabel,
+                    available: true,
+                    note: note
+                ))
+            } else {
+                result.append(ToolUsage(tool: .zcode, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No coding-plan ZCode config found (~/.zcode/cli/config.json)"))
+        }
+        }
+
+        if visible.contains(.gemini) {
             result.append(ToolUsage(
-                tool: .codex,
-                sessionPercent: snap.primaryPercent,
-                sessionResetsLabel: snap.primaryResetsLabel,
-                weeklyPercent: snap.secondaryPercent,
-                weeklyResetsLabel: snap.secondaryResetsLabel,
-                available: true,
-                note: note
+                tool: .gemini,
+                sessionPercent: nil,
+                sessionResetsLabel: nil,
+                weeklyPercent: nil,
+                weeklyResetsLabel: nil,
+                available: false,
+                note: "Google stopped serving Gemini CLI's usage API to individual accounts in June 2026 (Workspace/Enterprise unaffected)"
             ))
-        } else {
-            result.append(ToolUsage(tool: .codex, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "Unable to load Codex usage. Make sure Codex is installed and signed in to ChatGPT."))
         }
 
-        if let snap = ZCodeUsageEngine.computeSnapshot() {
-            let note = snap.planLevel.map { "Plan: \($0.capitalized) — live from Z.ai" } ?? "Live from Z.ai"
-            result.append(ToolUsage(
-                tool: .zcode,
-                sessionPercent: snap.sessionPercent,
-                sessionResetsLabel: snap.sessionResetsLabel,
-                weeklyPercent: snap.weeklyPercent,
-                weeklyResetsLabel: snap.weeklyResetsLabel,
-                available: true,
-                note: note
-            ))
-        } else {
-            result.append(ToolUsage(tool: .zcode, sessionPercent: nil, sessionResetsLabel: nil, weeklyPercent: nil, weeklyResetsLabel: nil, available: false, note: "No coding-plan ZCode config found (~/.zcode/cli/config.json)"))
-        }
-
-        result.append(ToolUsage(
-            tool: .gemini,
-            sessionPercent: nil,
-            sessionResetsLabel: nil,
-            weeklyPercent: nil,
-            weeklyResetsLabel: nil,
-            available: false,
-            note: "Google stopped serving Gemini CLI's usage API to individual accounts in June 2026 (Workspace/Enterprise unaffected)"
-        ))
-
-        // Hidden tools are excluded here — not measured, not notified about.
-        let visible = visibleTools
-        let shown = result.filter { visible.contains($0.tool) }
         let notificationsEnabled = self.notificationsEnabled
         DispatchQueue.main.async {
-            self.items = shown
+            self.items = result
             self.lastUpdated = Date()
-            UsageNotifier.checkThresholds(items: shown, enabled: notificationsEnabled)
+            UsageNotifier.checkThresholds(items: result, enabled: notificationsEnabled)
         }
     }
 }

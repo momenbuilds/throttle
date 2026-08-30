@@ -6,8 +6,11 @@ import Foundation
 /// usage source.
 enum CodexUsageEngine {
     struct Snapshot {
-        let primaryPercent: Double
-        let primaryResetsLabel: String
+        /// nil when the account exposes no window of this kind — a plan with
+        /// only a weekly limit has no session window, and rendering that as
+        /// "0% used" would state a number the API never reported.
+        let primaryPercent: Double?
+        let primaryResetsLabel: String?
         let secondaryPercent: Double?
         let secondaryResetsLabel: String?
         let planType: String?
@@ -53,8 +56,8 @@ enum CodexUsageEngine {
         }
 
         return Snapshot(
-            primaryPercent: session?.percent ?? 0,
-            primaryResetsLabel: resetLabel(resetsAt: session?.resetsAt, now: now),
+            primaryPercent: session?.percent,
+            primaryResetsLabel: session.map { resetLabel(resetsAt: $0.resetsAt, now: now) },
             secondaryPercent: weekly?.percent,
             secondaryResetsLabel: weekly.map { resetLabel(resetsAt: $0.resetsAt, now: now) },
             planType: limits["planType"] as? String

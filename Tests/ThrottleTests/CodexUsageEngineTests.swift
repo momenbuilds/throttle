@@ -27,7 +27,9 @@ final class CodexUsageEngineTests: XCTestCase {
         )
 
         XCTAssertNotNil(snapshot)
-        XCTAssertEqual(snapshot?.primaryPercent ?? -1, 0, accuracy: 0.001)
+        // No session window on this account -> absent, not a reported 0%.
+        XCTAssertNil(snapshot?.primaryPercent)
+        XCTAssertNil(snapshot?.primaryResetsLabel)
         XCTAssertEqual(snapshot?.secondaryPercent ?? -1, 0.12, accuracy: 0.001)
         XCTAssertEqual(snapshot?.secondaryResetsLabel, "in 7d")
         XCTAssertEqual(snapshot?.planType, "pro")

@@ -55,7 +55,7 @@ swift build
 | | Session window | Weekly window | Plan | Source |
 |---|---|---|---|---|
 | **Claude** | ✅ live | ✅ live, plus a **Fable 5** weekly bar when your plan has one | ✅ (`Max 20x`, `Pro`, …) | Anthropic's account API |
-| **Codex** | ✅ live | ⚠️ when OpenAI exposes it for your plan | ✅ | OpenAI's API, via Codex CLI's local logs |
+| **Codex** | ✅ live, when your plan has one | ✅ live | ✅ | OpenAI's account API, via Codex's own app-server |
 | **ZCode** | ✅ live | ✅ live | ✅ (`Pro`, …) | Z.ai's quota API |
 | **Gemini** | — | — | — | see [why below](#gemini) |
 
@@ -75,7 +75,7 @@ Rings and bars are colored by how close you are to the limit — green under 50%
 ## How the numbers work
 
 - **Claude** — calls `api.anthropic.com/api/oauth/usage`, the same endpoint Claude Code's own `/usage` and `/status` commands use, authenticated with the OAuth token Claude Code already saved when you ran `claude login` (read from `~/.claude/.credentials.json`, or the macOS Keychain item `Claude Code-credentials` on newer installs). The same response carries a `limits` array with model-scoped windows — the **Fable 5** bar is the `weekly_scoped` entry whose scope is the Fable model, shown only when your account actually has one. If you're signed out, it falls back to a cost-weighted estimate from local session logs (`~/.claude/projects/**/*.jsonl`), using real per-model $/token pricing compared against a budget you set in Settings — clearly labeled as an estimate, and it's allowed to show over 100% (in red) instead of silently capping.
-- **Codex** — reads the most recently modified `~/.codex/sessions/**/rollout-*.jsonl` and takes the real `rate_limits.primary.used_percent` (and `resets_at`) that OpenAI's API already returns into Codex CLI's own logs. No estimation.
+- **Codex** — asks your local Codex install for the account's current limits (`account/rateLimits/read` on Codex's own app-server), which returns the live windows OpenAI reports for your plan. Codex owns the ChatGPT sign-in; Throttle never reads or copies its tokens. Plans differ in which windows exist — a Plus account may expose only a weekly window — and a window your plan doesn't have is shown as unavailable rather than as 0%. No estimation.
 - **ZCode** — calls `api.z.ai/api/monitor/usage/quota/limit`, the same endpoint the ZCode app's own usage meter polls, authenticated with the coding-plan API key ZCode already saved in `~/.zcode/cli/config.json`. The response carries each plan window already server-computed — Z.ai meters coding plans in credits over a 5-hour rolling window plus a weekly window (e.g. Pro = 12,000 / 5h + 60,000 / week) — so Throttle shows the real percentages, reset times, and plan level with no estimation.
 - <a name="gemini"></a>**Gemini** — Google shut down Gemini CLI's usage-quota API for individual Google accounts in June 2026 (Workspace/Enterprise accounts are unaffected). Since there's nothing honest to show for most people right now, this stays off rather than faking a number. If that changes, or if you're on a Workspace/Enterprise account and want it wired up, see `GeminiUsageEngine.swift`.
 
@@ -96,7 +96,7 @@ Sources/Throttle/
   Engine/
     ClaudeOAuthEngine.swift    real usage + plan from Anthropic's account API
     ClaudeUsageEngine.swift    fallback: cost-weighted estimate from local logs
-    CodexUsageEngine.swift     real rate-limit % from OpenAI's API via local logs
+    CodexUsageEngine.swift     real rate-limit % from OpenAI's account API via Codex's app-server
     ZCodeUsageEngine.swift     real credit-window % from Z.ai's quota API
     GeminiUsageEngine.swift    stub — see "Gemini" above
   UI/
@@ -113,7 +113,7 @@ install.sh                   build + install to /Applications + launch
 
 ## Privacy
 
-Throttle reads local files Claude Code, Codex CLI, and ZCode already wrote to your disk, and makes requests only to `api.anthropic.com`, OpenAI's API, and `api.z.ai` using tokens those tools already stored. It doesn't run its own server, doesn't phone home, and doesn't share anything with a third party. It's not affiliated with Anthropic, OpenAI, Google, or Z.ai.
+Throttle reads local files Claude Code and ZCode already wrote to your disk, asks your own Codex install for its account limits, and makes requests only to `api.anthropic.com` and `api.z.ai` using tokens those tools already stored. It doesn't run its own server, doesn't phone home, and doesn't share anything with a third party. It's not affiliated with Anthropic, OpenAI, Google, or Z.ai.
 
 ## License
 
