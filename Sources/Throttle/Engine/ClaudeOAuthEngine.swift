@@ -55,6 +55,14 @@ enum ClaudeOAuthEngine {
     /// truly cold start) carries the tab until the window expires.
     private static var retryAfterUntil: Date?
     private static let cacheLock = NSLock()
+    /// Reading Claude Code's protected Keychain item can require a macOS
+    /// approval dialog. Keep the accepted token in memory until shortly before
+    /// expiry so the one-minute usage refresh never asks again.
+    private static let credentialLock = NSLock()
+    private static var cachedKeychainCredential: Credentials?
+    private static var keychainRetryAfter: Date?
+    private static let credentialExpirySkew: TimeInterval = 5 * 60
+    private static let keychainRetryDelay: TimeInterval = 60 * 60
 
     static func computeOutcome() -> Outcome {
         guard let creds = loadCredentials() else { return .noCredentials }
@@ -111,16 +119,13 @@ enum ClaudeOAuthEngine {
         return nil
     }
 
-    /// Claude Code can leave several credential payloads around at once — the
-    /// plaintext file plus a keychain item per account (multiple items share
-    /// the "Claude Code-credentials" service name), and any of them can be a
-    /// stale leftover from a previous login. Whichever token expires latest
-    /// is the one the running CLI is actually using.
+    /// Prefer a still-valid plaintext credential because it needs no Keychain
+    /// approval. When that file is stale, read the most recently modified
+    /// Claude Code Keychain item once and retain it only in this process.
     private static func loadCredentials() -> Credentials? {
-        var candidates: [Credentials] = []
-        if let fromFile = loadCredentialsFromFile() { candidates.append(fromFile) }
-        candidates.append(contentsOf: loadAllKeychainCredentials())
-        return candidates.max { $0.expiresAt ?? 0 < $1.expiresAt ?? 0 }
+        let fromFile = loadCredentialsFromFile()
+        if let fromFile, isFresh(fromFile, at: Date()) { return fromFile }
+        return loadPreferredKeychainCredential() ?? fromFile
     }
 
     private static func loadCredentialsFromFile() -> Credentials? {
@@ -130,23 +135,73 @@ enum ClaudeOAuthEngine {
         return parseCredentials(data)
     }
 
-    // Claude Code stores the OAuth payload in the macOS Keychain under
-    // service "Claude Code-credentials" — one item per account, so ask for
-    // all of them and let expiry decide below.
-    private static func loadAllKeychainCredentials() -> [Credentials] {
+    private static func isFresh(_ credentials: Credentials, at date: Date) -> Bool {
+        guard let expiresAt = credentials.expiresAt else { return true }
+        return expiresAt / 1_000 > date.addingTimeInterval(credentialExpirySkew).timeIntervalSince1970
+    }
+
+    // Claude Code stores one item per account under this shared service name.
+    // Enumerating non-secret attributes does not prompt. Sort those by the
+    // Keychain modification date, then request secret data only for the item
+    // most likely to be the CLI's current login. If that item is unexpectedly
+    // stale, continue just far enough to find a fresh one.
+    private static func loadPreferredKeychainCredential() -> Credentials? {
+        credentialLock.lock()
+        defer { credentialLock.unlock() }
+
+        let now = Date()
+        if let cachedKeychainCredential, isFresh(cachedKeychainCredential, at: now) {
+            return cachedKeychainCredential
+        }
+        cachedKeychainCredential = nil
+        if let keychainRetryAfter, now < keychainRetryAfter { return nil }
+
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: "Claude Code-credentials",
-            kSecReturnData as String: true,
             kSecReturnAttributes as String: true,
+            kSecReturnPersistentRef as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll,
         ]
         var items: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &items)
-        guard status == errSecSuccess, let array = items as? [[String: Any]] else { return [] }
-        return array.compactMap { item in
-            (item[kSecValueData as String] as? Data).flatMap(parseCredentials)
+        guard status == errSecSuccess, let array = items as? [[String: Any]] else {
+            keychainRetryAfter = now.addingTimeInterval(keychainRetryDelay)
+            return nil
         }
+
+        // macOS rejects kSecMatchLimitAll combined with kSecReturnData
+        // (errSecParam / -50). Enumerate opaque persistent references first,
+        // then fetch one item's data at a time.
+        let newestFirst = array.sorted {
+            let lhs = $0[kSecAttrModificationDate as String] as? Date ?? .distantPast
+            let rhs = $1[kSecAttrModificationDate as String] as? Date ?? .distantPast
+            return lhs > rhs
+        }
+        for item in newestFirst {
+            guard let persistentRef = item[kSecValuePersistentRef as String] as? Data else { continue }
+            let dataQuery: [String: Any] = [
+                kSecValuePersistentRef as String: persistentRef,
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+            ]
+            var value: CFTypeRef?
+            let dataStatus = SecItemCopyMatching(dataQuery as CFDictionary, &value)
+            guard dataStatus == errSecSuccess, let data = value as? Data else {
+                // A denial or cancellation must not become a password prompt
+                // every minute. A relaunch allows an immediate deliberate retry.
+                keychainRetryAfter = now.addingTimeInterval(keychainRetryDelay)
+                return nil
+            }
+            guard let credentials = parseCredentials(data) else { continue }
+            if isFresh(credentials, at: now) {
+                cachedKeychainCredential = credentials
+                keychainRetryAfter = nil
+                return credentials
+            }
+        }
+        keychainRetryAfter = now.addingTimeInterval(keychainRetryDelay)
+        return nil
     }
 
     /// Internal (not private) so tests can pin the stored-credential shape —
